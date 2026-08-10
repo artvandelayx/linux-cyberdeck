@@ -109,7 +109,7 @@ jobs:
             xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
             xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin \
             lightdm lightdm-gtk-greeter \
-            dbus-x11 policykit-1 \
+            dbus-x11 polkitd \
             xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
             xvfb xwayland xauth x11-xserver-utils \
             mesa-utils glx-alternative-mesa
