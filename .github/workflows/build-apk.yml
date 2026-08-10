@@ -87,7 +87,7 @@ jobs:
         run: |
           sudo tee ${{ env.ROOTFS_DIR }}/etc/apt/sources.list << 'EOF'
           deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
-          deb http://deb.debian.org/debian trixie-updates main contrib non-free nonumber
+          deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
           deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
           EOF
 
@@ -220,8 +220,8 @@ jobs:
           # Check for CMakeLists.txt - PRoot < v5.5.0 uses autotools
           if [ ! -f CMakeLists.txt ]; then
             echo "CMakeLists.txt not found - using autotools build instead"
-            # Create a simple build script for autotools
-            cat > build-android.sh << 'AUTOTOOLS_EOF'
+            # Write build script using printf to avoid heredoc issues
+            cat > build-android.sh << 'SCRIPT_EOF'
 #!/bin/bash
 set -euo pipefail
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME}"
@@ -237,14 +237,14 @@ export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"
 export PATH="${TOOLCHAIN}/bin:${PATH}"
 
 # Run autotools
-./autogen.sh || true  # May not exist
+./autogen.sh || true
 ./configure --host=${TARGET} --prefix=${RUNNER_TEMP}/proot-install \
   --disable-static --enable-shared \
   CC="${CC}" CXX="${CXX}" AR="${AR}" STRIP="${STRIP}" \
   CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}"
 make -j$(nproc)
 make install
-AUTOTOOLS_EOF
+SCRIPT_EOF
             chmod +x build-android.sh
           fi
 
@@ -350,15 +350,15 @@ AUTOTOOLS_EOF
           cp ${{ runner.temp }}/proot-bin/proot app/src/main/cpp/proot/
           # Create a simple CMakeLists.txt for PRoot prebuilt
           cat > app/src/main/cpp/proot/CMakeLists.txt << 'EOF'
-          cmake_minimum_required(VERSION 3.22.1)
-          project(proot-prebuilt)
-          
-          add_library(proot STATIC IMPORTED)
-          set_target_properties(proot PROPERTIES
-            IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/proot
-            IMPORTED_LINK_INTERFACE_LIBRARIES ""
-          )
-          EOF
+cmake_minimum_required(VERSION 3.22.1)
+project(proot-prebuilt)
+
+add_library(proot STATIC IMPORTED)
+set_target_properties(proot PROPERTIES
+  IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/proot
+  IMPORTED_LINK_INTERFACE_LIBRARIES ""
+)
+EOF
 
       - name: Configure CMake for Android
         run: |
