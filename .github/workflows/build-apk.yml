@@ -87,7 +87,7 @@ jobs:
         run: |
           sudo tee ${{ env.ROOTFS_DIR }}/etc/apt/sources.list << 'EOF'
           deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
-          deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+          deb http://deb.debian.org/debian trixie-updates main contrib non-free nonumber
           deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
           EOF
 
@@ -205,13 +205,48 @@ jobs:
             libtalloc-dev \
             libcap-dev \
             libseccomp-dev \
-            git
+            git \
+            autoconf \
+            automake \
+            libtool
 
       - name: Clone PRoot source
         run: |
+          # PRoot v5.4.0 uses autotools, not CMake. Check for build system and adapt.
           git clone --depth 1 --branch v5.4.0 https://github.com/proot-me/proot.git ${{ runner.temp }}/proot-src
           cd ${{ runner.temp }}/proot-src
           git submodule update --init --recursive
+          
+          # Check for CMakeLists.txt - PRoot < v5.5.0 uses autotools
+          if [ ! -f CMakeLists.txt ]; then
+            echo "CMakeLists.txt not found - using autotools build instead"
+            # Create a simple build script for autotools
+            cat > build-android.sh << 'AUTOTOOLS_EOF'
+#!/bin/bash
+set -euo pipefail
+export ANDROID_NDK_HOME="${ANDROID_NDK_HOME}"
+export TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+export TARGET="aarch64-linux-android"
+export API=26
+export CC="${TOOLCHAIN}/bin/${TARGET}${API}-clang"
+export CXX="${TOOLCHAIN}/bin/${TARGET}${API}-clang++"
+export AR="${TOOLCHAIN}/bin/llvm-ar"
+export STRIP="${TOOLCHAIN}/bin/llvm-strip"
+export CFLAGS="--target=${TARGET}${API} -fPIE -pie"
+export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"
+export PATH="${TOOLCHAIN}/bin:${PATH}"
+
+# Run autotools
+./autogen.sh || true  # May not exist
+./configure --host=${TARGET} --prefix=${RUNNER_TEMP}/proot-install \
+  --disable-static --enable-shared \
+  CC="${CC}" CXX="${CXX}" AR="${AR}" STRIP="${STRIP}" \
+  CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}"
+make -j$(nproc)
+make install
+AUTOTOOLS_EOF
+            chmod +x build-android.sh
+          fi
 
       - name: Setup Android NDK
         uses: android-actions/setup-android@v3
@@ -221,40 +256,54 @@ jobs:
       - name: Configure PRoot for Android ARM64
         run: |
           cd ${{ runner.temp }}/proot-src
-          mkdir -p build-android-arm64
-          cd build-android-arm64
           
-          # Android NDK toolchain
-          export ANDROID_NDK_HOME=${ANDROID_NDK_HOME}
-          export TOOLCHAIN=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64
-          export TARGET=aarch64-linux-android
-          export API=26
-          
-          export CC=${TOOLCHAIN}/bin/${TARGET}${API}-clang
-          export CXX=${TOOLCHAIN}/bin/${TARGET}${API}-clang++
-          export AR=${TOOLCHAIN}/bin/llvm-ar
-          export STRIP=${TOOLCHAIN}/bin/llvm-strip
-          export CFLAGS="--target=${TARGET}${API} -fPIE -pie"
-          export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"
-          
-          cmake .. \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=${CC} \
-            -DCMAKE_CXX_COMPILER=${CXX} \
-            -DCMAKE_AR=${AR} \
-            -DCMAKE_STRIP=${STRIP} \
-            -DCMAKE_C_FLAGS="${CFLAGS}" \
-            -DCMAKE_CXX_FLAGS="${CFLAGS}" \
-            -DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}" \
-            -DCMAKE_INSTALL_PREFIX=${{ runner.temp }}/proot-install \
-            -DWITH_SYSTEM_TALLOC=OFF \
-            -DWITH_SYSTEM_LIBCap=OFF
+          if [ -f CMakeLists.txt ]; then
+            # CMake build (newer PRoot versions)
+            mkdir -p build-android-arm64
+            cd build-android-arm64
+            
+            export ANDROID_NDK_HOME=${ANDROID_NDK_HOME}
+            export TOOLCHAIN=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64
+            export TARGET=aarch64-linux-android
+            export API=26
+            
+            export CC=${TOOLCHAIN}/bin/${TARGET}${API}-clang
+            export CXX=${TOOLCHAIN}/bin/${TARGET}${API}-clang++
+            export AR=${TOOLCHAIN}/bin/llvm-ar
+            export STRIP=${TOOLCHAIN}/bin/llvm-strip
+            export CFLAGS="--target=${TARGET}${API} -fPIE -pie"
+            export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"
+            
+            cmake .. \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_C_COMPILER=${CC} \
+              -DCMAKE_CXX_COMPILER=${CXX} \
+              -DCMAKE_AR=${AR} \
+              -DCMAKE_STRIP=${STRIP} \
+              -DCMAKE_C_FLAGS="${CFLAGS}" \
+              -DCMAKE_CXX_FLAGS="${CFLAGS}" \
+              -DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}" \
+              -DCMAKE_INSTALL_PREFIX=${{ runner.temp }}/proot-install \
+              -DWITH_SYSTEM_TALLOC=OFF \
+              -DWITH_SYSTEM_LIBCap=OFF
+          else
+            # Autotools build (PRoot v5.4.0) - configuration handled in build script
+            echo "Using autotools build script"
+          fi
 
       - name: Build PRoot
         run: |
-          cd ${{ runner.temp }}/proot-src/build-android-arm64
-          make -j$(nproc)
-          make install
+          cd ${{ runner.temp }}/proot-src
+          
+          if [ -f CMakeLists.txt ]; then
+            # CMake build
+            cd build-android-arm64
+            make -j$(nproc)
+            make install
+          else
+            # Autotools build
+            ./build-android.sh
+          fi
 
       - name: Verify PRoot binary
         run: |
