@@ -1,0 +1,64 @@
+# Gradle
+.gradle/
+build/
+*/build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# Local configuration
+local.properties
+gradle.properties
+keystore.properties
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# Native build
+.cxx/
+*.so
+*.a
+*.o
+
+# Rootfs and large assets (built by CI)
+app/src/main/assets/rootfs-arm64.tar.gz
+app/src/main/assets/proot
+app/src/main/jniLibs/
+
+# Logs
+*.log
+logs/
+
+# Temporary
+*.tmp
+*.temp
+tmp/
+
+# Node modules (if any)
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Coverage
+coverage/
+*.ec

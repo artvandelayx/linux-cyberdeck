@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Primary Colors -->
+    <color name="primary">#006EFF</color>
+    <color name="primary_variant">#0052CC</color>
+    <color name="primary_container">#D6E4FF</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="on_primary_container">#001D3D</color>
+
+    <!-- Secondary Colors -->
+    <color name="secondary">#006D5B</color>
+    <color name="secondary_variant">#005344</color>
+    <color name="secondary_container">#A7F3E0</color>
+    <color name="on_secondary">#FFFFFF</color>
+    <color name="on_secondary_container">#00211A</color>
+
+    <!-- Tertiary Colors -->
+    <color name="tertiary">#6C5DD3</color>
+    <color name="tertiary_variant">#5346B8</color>
+    <color name="tertiary_container">#E8DEF8</color>
+    <color name="on_tertiary">#FFFFFF</color>
+    <color name="on_tertiary_container">#241A4C</color>
+
+    <!-- Error Colors -->
+    <color name="error">#BA1A1A</color>
+    <color name="error_container">#FFDAD6</color>
+    <color name="on_error">#FFFFFF</color>
+    <color name="on_error_container">#410002</color>
+
+    <!-- Background & Surface -->
+    <color name="background">#FDFDFD</color>
+    <color name="on_background">#1C1B1F</color>
+    <color name="surface">#FDFDFD</color>
+    <color name="on_surface">#1C1B1F</color>
+    <color name="surface_variant">#E7E0EC</color>
+    <color name="on_surface_variant">#49454F</color>
+
+    <!-- Outline -->
+    <color name="outline">#7A757F</color>
+    <color name="outline_variant">#CAC4D0</color>
+
+    <!-- Text -->
+    <color name="text_primary">#1C1B1F</color>
+    <color name="text_secondary">#49454F</color>
+    <color name="text_tertiary">#7A757F</color>
+
+    <!-- Status Colors -->
+    <color name="status_running">#006D5B</color>
+    <color name="status_stopped">#7A757F</color>
+    <color name="status_starting">#6C5DD3</color>
+    <color name="status_installing">#006EFF</color>
+    <color name="status_error">#BA1A1A</color>
+
+    <!-- Status Dot Colors -->
+    <color name="dot_running">#00C853</color>
+    <color name="dot_stopped">#9E9E9E</color>
+    <color name="dot_starting">#651FFF</color>
+    <color name="dot_installing">#006EFF</color>
+    <color name="dot_error">#FF1744</color>
+
+    <!-- Shadows & Elevation -->
+    <color name="shadow">#000000</color>
+    <color name="scrim">#000000</color>
+</resources>

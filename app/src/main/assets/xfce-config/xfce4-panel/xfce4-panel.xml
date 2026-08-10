@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-panel" version="1.0">
+  <property name="panels" type="uint" value="1"/>
+  <property name="panels-1" type="empty">
+    <property name="size" type="uint" value="48"/>
+    <property name="length" type="uint" value="100"/>
+    <property name="position" type="string" value="p=6;x=0;y=0"/>
+    <property name="position-locked" type="bool" value="true"/>
+    <property name="plugin-ids" type="array">
+      <value type="int" value="1"/>
+      <value type="int" value="2"/>
+      <value type="int" value="3"/>
+      <value type="int" value="4"/>
+      <value type="int" value="5"/>
+      <value type="int" value="6"/>
+      <value type="int" value="7"/>
+    </property>
+    <property name="background-style" type="uint" value="0"/>
+    <property name="background-color" type="uint" value="0"/>
+    <property name="background-alpha" type="uint" value="100"/>
+    <property name="enter-opacity" type="uint" value="99"/>
+    <property name="leave-opacity" type="uint" value="99"/>
+    <property name="autohide-behavior" type="uint" value="0"/>
+    <property name="disable-struts" type="bool" value="false"/>
+    <property name="span-monitors" type="bool" value="false"/>
+  </property>
+  <property name="plugins" type="empty">
+    <property name="plugin-1" type="empty">
+      <property name="whiskermenu" type="empty">
+        <property name="button-title" type="string" value="Applications"/>
+        <property name="icon-name" type="string" value="xfce4-whiskermenu"/>
+        <property name="icon-size" type="uint" value="32"/>
+        <property name="show-button-title" type="bool" value="true"/>
+        <property name="show-button-icon" type="bool" value="true"/>
+        <property name="hover-switch-category" type="bool" value="true"/>
+        <property name="recent-items-max" type="uint" value="10"/>
+        <property name="search-actions" type="bool" value="true"/>
+        <property name="command-actions" type="bool" value="true"/>
+        <property name="profile-actions" type="bool" value="true"/>
+        <property name="position-category-pane" type="string" value="left"/>
+        <property name="category-icon-size" type="uint" value="24"/>
+        <property name="application-icon-size" type="uint" value="24"/>
+        <property name="recent-icon-size" type="uint" value="24"/>
+        <property name="favorites-icon-size" type="uint" value="24"/>
+      </property>
+    </property>
+    <property name="plugin-2" type="empty">
+      <property name="separator" type="empty">
+        <property name="style" type="uint" value="0"/>
+        <property name="expand" type="bool" value="false"/>
+      </property>
+    </property>
+    <property name="plugin-3" type="empty">
+      <property name="launcher" type="empty">
+        <property name="items" type="array">
+          <value type="string" value="org.xfce.terminal.desktop"/>
+          <value type="string" value="firefox-esr.desktop"/>
+          <value type="string" value="thunar.desktop"/>
+        </property>
+      </property>
+    </property>
+    <property name="plugin-4" type="empty">
+      <property name="separator" type="empty">
+        <property name="style" type="uint" value="1"/>
+        <property name="expand" type="bool" value="true"/>
+      </property>
+    </property>
+    <property name="plugin-5" type="empty">
+      <property name="systray" type="empty">
+        <property name="names-visible" type="array"/>
+        <property name="names-hidden" type="array"/>
+        <property name="single-row" type="bool" value="false"/>
+        <property name="square-icons" type="bool" value="true"/>
+        <property name="icon-size" type="uint" value="24"/>
+      </property>
+    </property>
+    <property name="plugin-6" type="empty">
+      <property name="clock" type="empty">
+        <property name="format" type="string" value="%H:%M"/>
+        <property name="mode" type="uint" value="0"/>
+        <property name="tooltip-format" type="string" value="%A, %d %B %Y"/>
+      </property>
+    </property>
+    <property name="plugin-7" type="empty">
+      <property name="actions" type="empty">
+        <property name="appearance" type="uint" value="1"/>
+        <property name="items" type="array">
+          <value type="string" value="logout"/>
+          <value type="string" value="restart"/>
+          <value type="string" value="shutdown"/>
+          <value type="string" value="suspend"/>
+          <value type="string" value="hibernate"/>
+          <value type="string" value="switch-user"/>
+          <value type="string" value="lock-screen"/>
+        </property>
+      </property>
+    </property>
+  </property>
+  <property name="external-items" type="array"/>
+</channel>

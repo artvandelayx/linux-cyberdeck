@@ -1,0 +1,41 @@
+#!/bin/bash
+# Xsession wrapper for LightDM
+# This sets up the environment before starting XFCE
+
+# Source profile
+if [ -f /etc/profile ]; then
+    . /etc/profile
+fi
+
+# Source user profile
+if [ -f "$HOME/.profile" ]; then
+    . "$HOME/.profile"
+fi
+
+# Set up XDG directories
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_CACHE_HOME="$HOME/.cache"
+export XDG_DATA_HOME="$HOME/.local/share"
+export XDG_STATE_HOME="$HOME/.local/state"
+
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+chown "$(id -u):$(id -g)" "$XDG_RUNTIME_DIR"
+
+# Set up D-Bus
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+fi
+
+# Start user D-Bus if not running
+if ! dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames >/dev/null 2>&1; then
+    eval "$(dbus-launch --sh-syntax --exit-with-session)"
+fi
+
+# Export display
+export DISPLAY="${DISPLAY:-:1}"
+export XAUTHORITY="${XAUTHORITY:-/tmp/.X1-auth}"
+
+# Start XFCE
+exec startxfce4

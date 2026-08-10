@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Gtk/FontName" type="string" value="Sans 12"/>
+  <property name="Gtk/CursorThemeName" type="string" value="Adwaita"/>
+  <property name="Gtk/CursorThemeSize" type="int" value="32"/>
+  <property name="Gtk/ToolbarStyle" type="string" value="icons"/>
+  <property name="Gtk/ToolbarIconSize" type="int" value="3"/>
+  <property name="Gtk/MenuImages" type="bool" value="true"/>
+  <property name="Gtk/ButtonImages" type="bool" value="true"/>
+  <property name="Gtk/EnableMnemonics" type="bool" value="true"/>
+  <property name="Gtk/EnableAccels" type="bool" value="true"/>
+  <property name="Gtk/EnableTooltips" type="bool" value="true"/>
+  <property name="Gtk/EnableEventSounds" type="bool" value="true"/>
+  <property name="Gtk/EnableInputFeedbackSounds" type="bool" value="true"/>
+  <property name="Gtk/DecorationLayout" type="string" value="menu:minimize,maximize,close"/>
+  <property name="Gtk/DialogsUseHeader" type="bool" value="true"/>
+  <property name="Gtk/ShellShowsAppMenu" type="bool" value="false"/>
+  <property name="Gtk/ShellShowsMenubar" type="bool" value="false"/>
+  <property name="Net/ThemeName" type="string" value="Adwaita"/>
+  <property name="Net/IconThemeName" type="string" value="Adwaita"/>
+  <property name="Net/FallbackIconTheme" type="string" value="Adwaita"/>
+  <property name="Net/CursorThemeName" type="string" value="Adwaita"/>
+  <property name="Net/CursorThemeSize" type="int" value="32"/>
+  <property name="Net/EnableEventSounds" type="bool" value="true"/>
+  <property name="Net/EnableInputFeedbackSounds" type="bool" value="true"/>
+  <property name="Net/SoundThemeName" type="string" value="freedesktop"/>
+  <property name="Net/DoubleClickTime" type="int" value="250"/>
+  <property name="Net/DoubleClickDistance" type="int" value="5"/>
+  <property name="Net/DndDragThreshold" type="int" value="8"/>
+  <property name="Xft/Antialias" type="int" value="1"/>
+  <property name="Xft/Hinting" type="int" value="1"/>
+  <property name="Xft/HintStyle" type="string" value="hintslight"/>
+  <property name="Xft/RGBA" type="string" value="rgb"/>
+  <property name="Xft/DPI" type="int" value="96"/>
+</channel>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="file" path="linux/" />
+        <exclude domain="file" path="linux/rootfs/" />
+        <exclude domain="file" path="linux/logs/" />
+        <exclude domain="file" path="linux/tmp/" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="linux/" />
+        <exclude domain="file" path="linux/rootfs/" />
+        <exclude domain="file" path="linux/logs/" />
+        <exclude domain="file" path="linux/tmp/" />
+    </device-transfer>
+</data-extraction-rules>

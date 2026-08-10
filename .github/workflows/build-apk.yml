@@ -1,0 +1,414 @@
+# Linux Cyberdeck - Android APK Build Pipeline
+# This workflow builds the complete APK including:
+# 1. Debian 13 (Trixie) ARM64 rootfs via debootstrap
+# 2. PRoot cross-compiled for ARM64 Android
+# 3. Native libraries (JNI bridge, supervisor, FUSE storage bridge)
+# 4. Final APK assembly
+
+name: Build Linux Cyberdeck APK
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+
+env:
+  ANDROID_SDK_VERSION: '34'
+  ANDROID_NDK_VERSION: '27.0.12077973'
+  DEBIAN_VERSION: 'trixie'
+  DEBIAN_ARCH: 'arm64'
+  ROOTFS_SIZE_GB: '4'
+
+jobs:
+  build-rootfs:
+    name: Build Debian ARM64 Rootfs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      rootfs_path: ${{ steps.set-outputs.outputs.rootfs_path }}
+      rootfs_size: ${{ steps.set-outputs.outputs.rootfs_size }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            debootstrap \
+            qemu-user-static \
+            binfmt-support \
+            curl \
+            tar \
+            gzip \
+            xz-utils \
+            sudo \
+            coreutils \
+            util-linux \
+            kmod
+
+      - name: Setup binfmt for ARM64
+        run: |
+          sudo systemctl restart systemd-binfmt
+          sudo update-binfmts --enable qemu-aarch64
+
+      - name: Create rootfs directory
+        run: |
+          mkdir -p ${{ runner.temp }}/rootfs-build
+          echo "ROOTFS_DIR=${{ runner.temp }}/rootfs-build/rootfs-arm64" >> $GITHUB_ENV
+
+      - name: Run debootstrap first stage
+        run: |
+          sudo debootstrap --arch=${{ env.DEBIAN_ARCH }} --foreign ${{ env.DEBIAN_VERSION }} ${{ env.ROOTFS_DIR }} http://deb.debian.org/debian
+
+      - name: Copy qemu static binary
+        run: |
+          sudo cp /usr/bin/qemu-aarch64-static ${{ env.ROOTFS_DIR }}/usr/bin/
+
+      - name: Run debootstrap second stage
+        run: |
+          sudo chroot ${{ env.ROOTFS_DIR }} /debootstrap/debootstrap --second-stage
+
+      - name: Configure apt sources
+        run: |
+          sudo tee ${{ env.ROOTFS_DIR }}/etc/apt/sources.list << 'EOF'
+          deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+          deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+          deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+          EOF
+
+      - name: Install base system packages
+        run: |
+          sudo chroot ${{ env.ROOTFS_DIR }} apt-get update
+          sudo chroot ${{ env.ROOTFS_DIR }} apt-get install -y --no-install-recommends \
+            bash coreutils util-linux procps iproute2 iputils-ping \
+            nano vim-tiny curl wget ca-certificates \
+            git python3 python3-pip python3-venv \
+            openssh-client openssh-server \
+            sudo locales tzdata \
+            systemd-sysv \
+            dbus
+
+      - name: Install XFCE desktop environment
+        run: |
+          sudo chroot ${{ env.ROOTFS_DIR }} apt-get install -y --no-install-recommends \
+            xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
+            xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin \
+            lightdm lightdm-gtk-greeter \
+            dbus-x11 policykit-1 \
+            xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
+            xvfb xwayland xauth x11-xserver-utils \
+            mesa-utils glx-alternative-mesa
+
+      - name: Install Firefox ESR
+        run: |
+          sudo chroot ${{ env.ROOTFS_DIR }} apt-get install -y --no-install-recommends firefox-esr
+
+      - name: Create cyber user
+        run: |
+          sudo chroot ${{ env.ROOTFS_DIR }} useradd -m -s /bin/bash -G sudo,video,audio,render,plugdev cyber
+          sudo chroot ${{ env.ROOTFS_DIR }} sh -c 'echo "cyber:cyber" | chpasswd'
+          sudo chroot ${{ env.ROOTFS_DIR }} sh -c 'echo "root:root" | chpasswd'
+          echo "cyber ALL=(ALL) NOPASSWD:ALL" | sudo tee ${{ env.ROOTFS_DIR }}/etc/sudoers.d/cyber
+
+      - name: Configure locale and timezone
+        run: |
+          sudo chroot ${{ env.ROOTFS_DIR }} sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+          sudo chroot ${{ env.ROOTFS_DIR }} locale-gen
+          echo 'LANG="en_US.UTF-8"' | sudo tee ${{ env.ROOTFS_DIR }}/etc/default/locale
+          sudo ln -sf /usr/share/zoneinfo/UTC ${{ env.ROOTFS_DIR }}/etc/localtime
+          echo "UTC" | sudo tee ${{ env.ROOTFS_DIR }}/etc/timezone
+
+      - name: Copy XFCE and LightDM configurations
+        run: |
+          # XFCE panel
+          sudo mkdir -p ${{ env.ROOTFS_DIR }}/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml
+          sudo cp -r app/src/main/assets/xfce-config/* ${{ env.ROOTFS_DIR }}/home/cyber/.config/xfce4/
+          
+          # LightDM
+          sudo mkdir -p ${{ env.ROOTFS_DIR }}/etc/lightdm
+          sudo cp -r app/src/main/assets/lightdm/* ${{ env.ROOTFS_DIR }}/etc/lightdm/
+          sudo chmod +x ${{ env.ROOTFS_DIR }}/etc/lightdm/*.sh
+
+      - name: Fix ownership
+        run: |
+          sudo chroot ${{ env.ROOTFS_DIR }} chown -R cyber:cyber /home/cyber
+
+      - name: Disable unnecessary services
+        run: |
+          sudo chroot ${{ env.ROOTFS_DIR }} systemctl disable bluetooth cups ModemManager avahi-daemon 2>/dev/null || true
+
+      - name: Clean apt cache
+        run: |
+          sudo chroot ${{ env.ROOTFS_DIR }} apt-get clean
+          sudo rm -rf ${{ env.ROOTFS_DIR }}/var/lib/apt/lists/*
+          sudo rm -rf ${{ env.ROOTFS_DIR }}/usr/share/doc/*
+          sudo rm -rf ${{ env.ROOTFS_DIR }}/usr/share/man/*
+          sudo rm -rf ${{ env.ROOTFS_DIR }}/usr/share/locale/*
+          sudo find ${{ env.ROOTFS_DIR }} -name "*.pyc" -delete
+          sudo find ${{ env.ROOTFS_DIR }} -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+
+      - name: Create rootfs tarball
+        run: |
+          mkdir -p ${{ runner.temp }}/artifacts
+          cd ${{ runner.temp }}/rootfs-build
+          tar -czf ${{ runner.temp }}/artifacts/rootfs-arm64.tar.gz rootfs-arm64
+          ls -lh ${{ runner.temp }}/artifacts/rootfs-arm64.tar.gz
+
+      - name: Upload rootfs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-arm64
+          path: ${{ runner.temp }}/artifacts/rootfs-arm64.tar.gz
+          retention-days: 7
+
+      - name: Set outputs
+        id: set-outputs
+        run: |
+          SIZE=$(stat -c%s ${{ runner.temp }}/artifacts/rootfs-arm64.tar.gz)
+          echo "rootfs_path=${{ runner.temp }}/artifacts/rootfs-arm64.tar.gz" >> $GITHUB_OUTPUT
+          echo "rootfs_size=$SIZE" >> $GITHUB_OUTPUT
+
+  build-proot:
+    name: Cross-compile PRoot for ARM64 Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      proot_path: ${{ steps.set-outputs.outputs.proot_path }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            libtalloc-dev \
+            libcap-dev \
+            libseccomp-dev \
+            git
+
+      - name: Clone PRoot source
+        run: |
+          git clone --depth 1 --branch v5.4.0 https://github.com/proot-me/proot.git ${{ runner.temp }}/proot-src
+          cd ${{ runner.temp }}/proot-src
+          git submodule update --init --recursive
+
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Configure PRoot for Android ARM64
+        run: |
+          cd ${{ runner.temp }}/proot-src
+          mkdir -p build-android-arm64
+          cd build-android-arm64
+          
+          # Android NDK toolchain
+          export ANDROID_NDK_HOME=${ANDROID_NDK_HOME}
+          export TOOLCHAIN=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64
+          export TARGET=aarch64-linux-android
+          export API=26
+          
+          export CC=${TOOLCHAIN}/bin/${TARGET}${API}-clang
+          export CXX=${TOOLCHAIN}/bin/${TARGET}${API}-clang++
+          export AR=${TOOLCHAIN}/bin/llvm-ar
+          export STRIP=${TOOLCHAIN}/bin/llvm-strip
+          export CFLAGS="--target=${TARGET}${API} -fPIE -pie"
+          export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"
+          
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=${CC} \
+            -DCMAKE_CXX_COMPILER=${CXX} \
+            -DCMAKE_AR=${AR} \
+            -DCMAKE_STRIP=${STRIP} \
+            -DCMAKE_C_FLAGS="${CFLAGS}" \
+            -DCMAKE_CXX_FLAGS="${CFLAGS}" \
+            -DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}" \
+            -DCMAKE_INSTALL_PREFIX=${{ runner.temp }}/proot-install \
+            -DWITH_SYSTEM_TALLOC=OFF \
+            -DWITH_SYSTEM_LIBCap=OFF
+
+      - name: Build PRoot
+        run: |
+          cd ${{ runner.temp }}/proot-src/build-android-arm64
+          make -j$(nproc)
+          make install
+
+      - name: Verify PRoot binary
+        run: |
+          file ${{ runner.temp }}/proot-install/bin/proot
+          ${{ runner.temp }}/proot-install/bin/proot --version
+
+      - name: Upload PRoot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proot-android-arm64
+          path: ${{ runner.temp }}/proot-install/bin/proot
+          retention-days: 7
+
+      - name: Set outputs
+        id: set-outputs
+        run: |
+          echo "proot_path=${{ runner.temp }}/proot-install/bin/proot" >> $GITHUB_OUTPUT
+
+  build-native:
+    name: Build Native Libraries (JNI + Supervisor)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: [build-proot]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download PRoot binary
+        uses: actions/download-artifact@v4
+        with:
+          name: proot-android-arm64
+          path: ${{ runner.temp }}/proot-bin
+
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Prepare PRoot for CMake
+        run: |
+          mkdir -p app/src/main/cpp/proot
+          cp ${{ runner.temp }}/proot-bin/proot app/src/main/cpp/proot/
+          # Create a simple CMakeLists.txt for PRoot prebuilt
+          cat > app/src/main/cpp/proot/CMakeLists.txt << 'EOF'
+          cmake_minimum_required(VERSION 3.22.1)
+          project(proot-prebuilt)
+          
+          add_library(proot STATIC IMPORTED)
+          set_target_properties(proot PROPERTIES
+            IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/proot
+            IMPORTED_LINK_INTERFACE_LIBRARIES ""
+          )
+          EOF
+
+      - name: Configure CMake for Android
+        run: |
+          cd app
+          cmake -B build/arm64 -S src/main/cpp \
+            -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DANDROID_NDK=${ANDROID_NDK_HOME} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_ANDROID_NDK_TOOLCHAIN_VERSION=clang
+
+      - name: Build native libraries
+        run: |
+          cd app
+          cmake --build build/arm64 -j$(nproc) --config Release
+
+      - name: Verify native libraries
+        run: |
+          ls -la app/build/arm64/jniLibs/arm64-v8a/
+          file app/build/arm64/jniLibs/arm64-v8a/liblinuxcyberdeck_jni.so
+
+      - name: Upload native libraries artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-libs-arm64
+          path: app/build/arm64/jniLibs/arm64-v8a/*.so
+          retention-days: 7
+
+  assemble-apk:
+    name: Assemble Final APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: [build-rootfs, build-proot, build-native]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download rootfs
+        uses: actions/download-artifact@v4
+        with:
+          name: rootfs-arm64
+          path: app/src/main/assets
+
+      - name: Download PRoot binary
+        uses: actions/download-artifact@v4
+        with:
+          name: proot-android-arm64
+          path: app/src/main/assets
+
+      - name: Download native libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: native-libs-arm64
+          path: app/src/main/jniLibs/arm64-v8a
+
+      - name: Verify assets
+        run: |
+          ls -lh app/src/main/assets/
+          ls -la app/src/main/jniLibs/arm64-v8a/
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          sdk-version: ${{ env.ANDROID_SDK_VERSION }}
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Build APK
+        run: |
+          ./gradlew :app:assembleRelease --no-daemon -Dorg.gradle.jvmargs="-Xmx4g"
+
+      - name: Verify APK
+        run: |
+          ls -lh app/build/outputs/apk/release/
+          unzip -l app/build/outputs/apk/release/app-release.apk | head -30
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-cyberdeck-apk
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      - name: Create release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/app-release.apk
+          generate_release_notes: true
+          draft: false
+          prerelease: false

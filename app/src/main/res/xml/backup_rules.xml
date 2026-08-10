@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <include domain="file" path="linux/" />
+    <exclude domain="file" path="linux/rootfs/" />
+    <exclude domain="file" path="linux/logs/" />
+    <exclude domain="file" path="linux/tmp/" />
+</full-backup-content>
