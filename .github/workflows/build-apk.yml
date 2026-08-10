@@ -220,31 +220,29 @@ jobs:
           # Check for CMakeLists.txt - PRoot < v5.5.0 uses autotools
           if [ ! -f CMakeLists.txt ]; then
             echo "CMakeLists.txt not found - using autotools build instead"
-            # Write build script using printf to avoid heredoc issues
-            cat > build-android.sh << 'SCRIPT_EOF'
-#!/bin/bash
-set -euo pipefail
-export ANDROID_NDK_HOME="${ANDROID_NDK_HOME}"
-export TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
-export TARGET="aarch64-linux-android"
-export API=26
-export CC="${TOOLCHAIN}/bin/${TARGET}${API}-clang"
-export CXX="${TOOLCHAIN}/bin/${TARGET}${API}-clang++"
-export AR="${TOOLCHAIN}/bin/llvm-ar"
-export STRIP="${TOOLCHAIN}/bin/llvm-strip"
-export CFLAGS="--target=${TARGET}${API} -fPIE -pie"
-export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"
-export PATH="${TOOLCHAIN}/bin:${PATH}"
-
-# Run autotools
-./autogen.sh || true
-./configure --host=${TARGET} --prefix=${RUNNER_TEMP}/proot-install \
-  --disable-static --enable-shared \
-  CC="${CC}" CXX="${CXX}" AR="${AR}" STRIP="${STRIP}" \
-  CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}"
-make -j$(nproc)
-make install
-SCRIPT_EOF
+            # Write build script using printf to avoid heredoc issues in YAML
+            printf '%s\n' '#!/bin/bash' \
+            'set -euo pipefail' \
+            'export ANDROID_NDK_HOME="${ANDROID_NDK_HOME}"' \
+            'export TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"' \
+            'export TARGET="aarch64-linux-android"' \
+            'export API=26' \
+            'export CC="${TOOLCHAIN}/bin/${TARGET}${API}-clang"' \
+            'export CXX="${TOOLCHAIN}/bin/${TARGET}${API}-clang++"' \
+            'export AR="${TOOLCHAIN}/bin/llvm-ar"' \
+            'export STRIP="${TOOLCHAIN}/bin/llvm-strip"' \
+            'export CFLAGS="--target=${TARGET}${API} -fPIE -pie"' \
+            'export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"' \
+            'export PATH="${TOOLCHAIN}/bin:${PATH}"' \
+            '' \
+            '# Run autotools' \
+            './autogen.sh || true' \
+            './configure --host=${TARGET} --prefix=${RUNNER_TEMP}/proot-install \' \
+            '  --disable-static --enable-shared \' \
+            '  CC="${CC}" CXX="${CXX}" AR="${AR}" STRIP="${STRIP}" \' \
+            '  CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}"' \
+            'make -j$(nproc)' \
+            'make install' > build-android.sh
             chmod +x build-android.sh
           fi
 
