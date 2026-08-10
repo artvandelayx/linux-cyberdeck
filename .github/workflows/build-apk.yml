@@ -85,11 +85,11 @@ jobs:
 
       - name: Configure apt sources
         run: |
-          sudo tee ${{ env.ROOTFS_DIR }}/etc/apt/sources.list << 'EOF'
+          sudo tee ${{ env.ROOTFS_DIR }}/etc/apt/sources.list > /dev/null << 'APT_EOF'
 deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
 deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
 deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
-EOF
+APT_EOF
 
       - name: Install base system packages
         run: |
