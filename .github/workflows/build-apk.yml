@@ -86,10 +86,10 @@ jobs:
       - name: Configure apt sources
         run: |
           sudo tee ${{ env.ROOTFS_DIR }}/etc/apt/sources.list << 'EOF'
-          deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
-          deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
-          deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
-          EOF
+deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+EOF
 
       - name: Install base system packages
         run: |
@@ -135,11 +135,8 @@ jobs:
 
       - name: Copy XFCE and LightDM configurations
         run: |
-          # XFCE panel
           sudo mkdir -p ${{ env.ROOTFS_DIR }}/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml
           sudo cp -r app/src/main/assets/xfce-config/* ${{ env.ROOTFS_DIR }}/home/cyber/.config/xfce4/
-          
-          # LightDM
           sudo mkdir -p ${{ env.ROOTFS_DIR }}/etc/lightdm
           sudo cp -r app/src/main/assets/lightdm/* ${{ env.ROOTFS_DIR }}/etc/lightdm/
           sudo chmod +x ${{ env.ROOTFS_DIR }}/etc/lightdm/*.sh
@@ -212,15 +209,12 @@ jobs:
 
       - name: Clone PRoot source
         run: |
-          # PRoot v5.4.0 uses autotools, not CMake. Check for build system and adapt.
           git clone --depth 1 --branch v5.4.0 https://github.com/proot-me/proot.git ${{ runner.temp }}/proot-src
           cd ${{ runner.temp }}/proot-src
           git submodule update --init --recursive
           
-          # Check for CMakeLists.txt - PRoot < v5.5.0 uses autotools
           if [ ! -f CMakeLists.txt ]; then
             echo "CMakeLists.txt not found - using autotools build instead"
-            # Write build script using printf to avoid heredoc issues in YAML
             printf '%s\n' '#!/bin/bash' \
             'set -euo pipefail' \
             'export ANDROID_NDK_HOME="${ANDROID_NDK_HOME}"' \
@@ -256,7 +250,6 @@ jobs:
           cd ${{ runner.temp }}/proot-src
           
           if [ -f CMakeLists.txt ]; then
-            # CMake build (newer PRoot versions)
             mkdir -p build-android-arm64
             cd build-android-arm64
             
@@ -285,7 +278,6 @@ jobs:
               -DWITH_SYSTEM_TALLOC=OFF \
               -DWITH_SYSTEM_LIBCap=OFF
           else
-            # Autotools build (PRoot v5.4.0) - configuration handled in build script
             echo "Using autotools build script"
           fi
 
@@ -294,12 +286,10 @@ jobs:
           cd ${{ runner.temp }}/proot-src
           
           if [ -f CMakeLists.txt ]; then
-            # CMake build
             cd build-android-arm64
             make -j$(nproc)
             make install
           else
-            # Autotools build
             ./build-android.sh
           fi
 
@@ -346,17 +336,15 @@ jobs:
         run: |
           mkdir -p app/src/main/cpp/proot
           cp ${{ runner.temp }}/proot-bin/proot app/src/main/cpp/proot/
-          # Create a simple CMakeLists.txt for PRoot prebuilt
-          cat > app/src/main/cpp/proot/CMakeLists.txt << 'EOF'
-cmake_minimum_required(VERSION 3.22.1)
-project(proot-prebuilt)
-
-add_library(proot STATIC IMPORTED)
-set_target_properties(proot PROPERTIES
-  IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/proot
-  IMPORTED_LINK_INTERFACE_LIBRARIES ""
-)
-EOF
+          printf '%s\n' \
+            'cmake_minimum_required(VERSION 3.22.1)' \
+            'project(proot-prebuilt)' \
+            '' \
+            'add_library(proot STATIC IMPORTED)' \
+            'set_target_properties(proot PROPERTIES' \
+            '  IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/proot' \
+            '  IMPORTED_LINK_INTERFACE_LIBRARIES ""' \
+            ')' > app/src/main/cpp/proot/CMakeLists.txt
 
       - name: Configure CMake for Android
         run: |
