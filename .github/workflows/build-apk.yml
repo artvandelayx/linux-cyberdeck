@@ -65,6 +65,8 @@ jobs:
         run: |
           sudo systemctl restart systemd-binfmt
           sudo update-binfmts --enable qemu-aarch64
+          # Verify binfmt is working
+          cat /proc/sys/fs/binfmt_misc/qemu-aarch64 || echo "binfmt not enabled"
 
       - name: Create rootfs directory
         run: |
@@ -225,8 +227,10 @@ jobs:
             'export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"' \
             'export PATH="${TOOLCHAIN}/bin:${PATH}"' \
             '' \
-            '# Run autotools' \
-            './autogen.sh || true' \
+            '# Generate configure script if needed' \
+            'if [ ! -f configure ]; then' \
+            '  autoreconf -fi' \
+            'fi' \
             './configure --host=${TARGET} --prefix=${RUNNER_TEMP}/proot-install \' \
             '  --disable-static --enable-shared \' \
             '  CC="${CC}" CXX="${CXX}" AR="${AR}" STRIP="${STRIP}" \' \
