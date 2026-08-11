@@ -42,8 +42,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install build dependencies
         run: |
@@ -65,8 +63,14 @@ jobs:
         run: |
           sudo systemctl restart systemd-binfmt
           sudo update-binfmts --enable qemu-aarch64
+          sleep 2
           # Verify binfmt is working
-          cat /proc/sys/fs/binfmt_misc/qemu-aarch64 || echo "binfmt not enabled"
+          if [ -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+            cat /proc/sys/fs/binfmt_misc/qemu-aarch64
+          else
+            echo "ERROR: binfmt not enabled for qemu-aarch64"
+            exit 1
+          fi
 
       - name: Create rootfs directory
         run: |
@@ -80,6 +84,8 @@ jobs:
       - name: Copy qemu static binary
         run: |
           sudo cp /usr/bin/qemu-aarch64-static ${{ env.ROOTFS_DIR }}/usr/bin/
+          # Verify qemu binary works
+          sudo chroot ${{ env.ROOTFS_DIR }} /usr/bin/qemu-aarch64-static /bin/true
 
       - name: Run debootstrap second stage
         run: |
@@ -187,8 +193,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install build dependencies
         run: |
@@ -203,95 +207,63 @@ jobs:
             git \
             autoconf \
             automake \
-            libtool
+            libtool \
+            gettext
 
       - name: Clone PRoot source
         run: |
           git clone --depth 1 --branch v5.4.0 https://github.com/proot-me/proot.git ${{ runner.temp }}/proot-src
           cd ${{ runner.temp }}/proot-src
           git submodule update --init --recursive
-          
-          if [ ! -f CMakeLists.txt ]; then
-            echo "CMakeLists.txt not found - using autotools build instead"
-            printf '%s\n' '#!/bin/bash' \
-            'set -euo pipefail' \
-            'export ANDROID_NDK_HOME="${ANDROID_NDK_HOME}"' \
-            'export TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"' \
-            'export TARGET="aarch64-linux-android"' \
-            'export API=26' \
-            'export CC="${TOOLCHAIN}/bin/${TARGET}${API}-clang"' \
-            'export CXX="${TOOLCHAIN}/bin/${TARGET}${API}-clang++"' \
-            'export AR="${TOOLCHAIN}/bin/llvm-ar"' \
-            'export STRIP="${TOOLCHAIN}/bin/llvm-strip"' \
-            'export CFLAGS="--target=${TARGET}${API} -fPIE -pie"' \
-            'export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"' \
-            'export PATH="${TOOLCHAIN}/bin:${PATH}"' \
-            '' \
-            '# Generate configure script if needed' \
-            'if [ ! -f configure ]; then' \
-            '  autoreconf -fi' \
-            'fi' \
-            './configure --host=${TARGET} --prefix=${RUNNER_TEMP}/proot-install \' \
-            '  --disable-static --enable-shared \' \
-            '  CC="${CC}" CXX="${CXX}" AR="${AR}" STRIP="${STRIP}" \' \
-            '  CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}"' \
-            'make -j$(nproc)' \
-            'make install' > build-android.sh
-            chmod +x build-android.sh
-          fi
 
       - name: Setup Android NDK
         uses: android-actions/setup-android@v3
         with:
           packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-34'
 
-      - name: Configure PRoot for Android ARM64
+      - name: Build PRoot (autotools)
         run: |
           cd ${{ runner.temp }}/proot-src
           
-          if [ -f CMakeLists.txt ]; then
-            mkdir -p build-android-arm64
-            cd build-android-arm64
-            
-            export ANDROID_NDK_HOME=${ANDROID_NDK_HOME}
-            export TOOLCHAIN=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64
-            export TARGET=aarch64-linux-android
-            export API=26
-            
-            export CC=${TOOLCHAIN}/bin/${TARGET}${API}-clang
-            export CXX=${TOOLCHAIN}/bin/${TARGET}${API}-clang++
-            export AR=${TOOLCHAIN}/bin/llvm-ar
-            export STRIP=${TOOLCHAIN}/bin/llvm-strip
-            export CFLAGS="--target=${TARGET}${API} -fPIE -pie"
-            export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"
-            
-            cmake .. \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_C_COMPILER=${CC} \
-              -DCMAKE_CXX_COMPILER=${CXX} \
-              -DCMAKE_AR=${AR} \
-              -DCMAKE_STRIP=${STRIP} \
-              -DCMAKE_C_FLAGS="${CFLAGS}" \
-              -DCMAKE_CXX_FLAGS="${CFLAGS}" \
-              -DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}" \
-              -DCMAKE_INSTALL_PREFIX=${{ runner.temp }}/proot-install \
-              -DWITH_SYSTEM_TALLOC=OFF \
-              -DWITH_SYSTEM_LIBCap=OFF
-          else
-            echo "Using autotools build script"
-          fi
-
-      - name: Build PRoot
-        run: |
-          cd ${{ runner.temp }}/proot-src
+          echo "=== PRoot source directory ==="
+          ls -la
           
-          if [ -f CMakeLists.txt ]; then
-            cd build-android-arm64
-            make -j$(nproc)
-            make install
+          echo "=== Checking for configure script ==="
+          if [ ! -f configure ]; then
+            echo "No configure script found, generating with autoreconf..."
+            autoreconf -fi -v
           else
-            ./build-android.sh
+            echo "Configure script exists"
           fi
+          
+          echo "=== Setting up Android NDK toolchain ==="
+          export ANDROID_NDK_HOME=${ANDROID_NDK_HOME}
+          export TOOLCHAIN=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64
+          export TARGET=aarch64-linux-android
+          export API=26
+          export CC="${TOOLCHAIN}/bin/${TARGET}${API}-clang"
+          export CXX="${TOOLCHAIN}/bin/${TARGET}${API}-clang++"
+          export AR="${TOOLCHAIN}/bin/llvm-ar"
+          export STRIP="${TOOLCHAIN}/bin/llvm-strip"
+          export CFLAGS="--target=${TARGET}${API} -fPIE -pie"
+          export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"
+          export PATH="${TOOLCHAIN}/bin:${PATH}"
+          
+          echo "=== Verifying toolchain ==="
+          which ${CC}
+          ${CC} --version
+          
+          echo "=== Running configure ==="
+          ./configure --host=${TARGET} --prefix=${{ runner.temp }}/proot-install \
+            --disable-static --enable-shared \
+            CC="${CC}" CXX="${CXX}" AR="${AR}" STRIP="${STRIP}" \
+            CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}" 2>&1 | tee configure.log
+          
+          echo "=== Building ==="
+          make -j$(nproc) 2>&1 | tee build.log
+          
+          echo "=== Installing ==="
+          make install 2>&1 | tee install.log
 
       - name: Verify PRoot binary
         run: |
@@ -318,8 +290,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Download PRoot binary
         uses: actions/download-artifact@v4
@@ -382,8 +352,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Download rootfs
         uses: actions/download-artifact@v4
