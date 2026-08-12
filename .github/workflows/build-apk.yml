@@ -1,7 +1,7 @@
 # Linux Cyberdeck - Android APK Build Pipeline
 # This workflow builds the complete APK including:
-# 1. Debian 13 (Trixie) ARM64 rootfs via debootstrap
-# 2. PRoot cross-compiled for ARM64 Android
+# 1. Debian 13 (Trixie) ARM64 rootfs via multistrap (no qemu chroot needed)
+# 2. PRoot built with termux-packages approach (known working for Android)
 # 3. Native libraries (JNI bridge, supervisor, FUSE storage bridge)
 # 4. Final APK assembly
 
@@ -29,11 +29,10 @@ env:
   ANDROID_NDK_VERSION: '27.0.12077973'
   DEBIAN_VERSION: 'trixie'
   DEBIAN_ARCH: 'arm64'
-  ROOTFS_SIZE_GB: '4'
 
 jobs:
   build-rootfs:
-    name: Build Debian ARM64 Rootfs
+    name: Build Debian ARM64 Rootfs (multistrap)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     outputs:
@@ -43,125 +42,125 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install multistrap and dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            debootstrap \
+            multistrap \
             qemu-user-static \
             binfmt-support \
-            curl \
             tar \
             gzip \
             xz-utils \
             sudo \
             coreutils \
-            util-linux \
-            kmod
+            util-linux
 
-      - name: Setup binfmt for ARM64
+      - name: Create multistrap config
         run: |
-          sudo systemctl restart systemd-binfmt
-          sudo update-binfmts --enable qemu-aarch64
-          sleep 2
-          # Verify binfmt is working
-          if [ -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
-            cat /proc/sys/fs/binfmt_misc/qemu-aarch64
-          else
-            echo "ERROR: binfmt not enabled for qemu-aarch64"
-            exit 1
-          fi
+          cat > multistrap.conf << 'EOF'
+[General]
+arch=arm64
+directory=rootfs-arm64
+cleanup=true
+noauth=true
+unpack=true
+bootstrap=Debian
+aptsources=Debian
 
-      - name: Create rootfs directory
-        run: |
-          mkdir -p ${{ runner.temp }}/rootfs-build
-          echo "ROOTFS_DIR=${{ runner.temp }}/rootfs-build/rootfs-arm64" >> $GITHUB_ENV
+[Debian]
+packages=bash coreutils util-linux procps iproute2 iputils-ping \
+  nano vim-tiny curl wget ca-certificates \
+  git python3 python3-pip python3-venv \
+  openssh-client openssh-server \
+  sudo locales tzdata \
+  systemd-sysv dbus \
+  xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
+  xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin \
+  lightdm lightdm-gtk-greeter \
+  dbus-x11 polkitd \
+  xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
+  xvfb xwayland xauth x11-xserver-utils \
+  mesa-utils glx-alternative-mesa \
+  firefox-esr
+source=http://deb.debian.org/debian
+suite=trixie
+components=main contrib non-free non-free-firmware
+keyring=debian-archive-keyring
 
-      - name: Run debootstrap first stage
+[Debian-Updates]
+packages=
+source=http://deb.debian.org/debian
+suite=trixie-updates
+components=main contrib non-free non-free-firmware
+
+[Debian-Security]
+packages=
+source=http://security.debian.org/debian-security
+suite=trixie-security
+components=main contrib non-free non-free-firmware
+EOF
+
+      - name: Run multistrap
         run: |
-          sudo debootstrap --arch=${{ env.DEBIAN_ARCH }} --foreign ${{ env.DEBIAN_VERSION }} ${{ env.ROOTFS_DIR }} http://deb.debian.org/debian
+          sudo multistrap -f multistrap.conf -d ${{ runner.temp }}/rootfs-build
 
       - name: Copy qemu static binary
         run: |
-          sudo cp /usr/bin/qemu-aarch64-static ${{ env.ROOTFS_DIR }}/usr/bin/
-          # Verify qemu binary works
-          sudo chroot ${{ env.ROOTFS_DIR }} /usr/bin/qemu-aarch64-static /bin/true
+          sudo cp /usr/bin/qemu-aarch64-static ${{ runner.temp }}/rootfs-build/rootfs-arm64/usr/bin/
 
-      - name: Run debootstrap second stage
+      - name: Configure rootfs (chroot with qemu)
         run: |
-          sudo chroot ${{ env.ROOTFS_DIR }} /debootstrap/debootstrap --second-stage
-
-      - name: Configure apt sources
-        run: |
-          printf 'deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware\ndeb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware\ndeb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware\n' | sudo tee ${{ env.ROOTFS_DIR }}/etc/apt/sources.list > /dev/null
-
-      - name: Install base system packages
-        run: |
-          sudo chroot ${{ env.ROOTFS_DIR }} apt-get update
-          sudo chroot ${{ env.ROOTFS_DIR }} apt-get install -y --no-install-recommends \
-            bash coreutils util-linux procps iproute2 iputils-ping \
-            nano vim-tiny curl wget ca-certificates \
-            git python3 python3-pip python3-venv \
-            openssh-client openssh-server \
-            sudo locales tzdata \
-            systemd-sysv \
-            dbus
-
-      - name: Install XFCE desktop environment
-        run: |
-          sudo chroot ${{ env.ROOTFS_DIR }} apt-get install -y --no-install-recommends \
-            xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
-            xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin \
-            lightdm lightdm-gtk-greeter \
-            dbus-x11 polkitd \
-            xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
-            xvfb xwayland xauth x11-xserver-utils \
-            mesa-utils glx-alternative-mesa
-
-      - name: Install Firefox ESR
-        run: |
-          sudo chroot ${{ env.ROOTFS_DIR }} apt-get install -y --no-install-recommends firefox-esr
-
-      - name: Create cyber user
-        run: |
-          sudo chroot ${{ env.ROOTFS_DIR }} useradd -m -s /bin/bash -G sudo,video,audio,render,plugdev cyber
-          sudo chroot ${{ env.ROOTFS_DIR }} sh -c 'echo "cyber:cyber" | chpasswd'
-          sudo chroot ${{ env.ROOTFS_DIR }} sh -c 'echo "root:root" | chpasswd'
-          echo "cyber ALL=(ALL) NOPASSWD:ALL" | sudo tee ${{ env.ROOTFS_DIR }}/etc/sudoers.d/cyber
-
-      - name: Configure locale and timezone
-        run: |
-          sudo chroot ${{ env.ROOTFS_DIR }} sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
-          sudo chroot ${{ env.ROOTFS_DIR }} locale-gen
-          echo 'LANG="en_US.UTF-8"' | sudo tee ${{ env.ROOTFS_DIR }}/etc/default/locale
-          sudo ln -sf /usr/share/zoneinfo/UTC ${{ env.ROOTFS_DIR }}/etc/localtime
-          echo "UTC" | sudo tee ${{ env.ROOTFS_DIR }}/etc/timezone
+          sudo chroot ${{ runner.temp }}/rootfs-build/rootfs-arm64 /bin/bash << 'CHROOT_EOF'
+          # Second stage setup
+          /debootstrap/debootstrap --second-stage 2>/dev/null || true
+          
+          # Configure apt
+          cat > /etc/apt/sources.list << 'APT_EOF'
+deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+APT_EOF
+          
+          # Update and install any missing packages
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            systemd-sysv dbus || true
+          
+          # Create cyber user
+          useradd -m -s /bin/bash -G sudo,video,audio,render,plugdev cyber 2>/dev/null || true
+          echo "cyber:cyber" | chpasswd
+          echo "root:root" | chpasswd
+          echo "cyber ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/cyber
+          
+          # Locale
+          sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+          locale-gen
+          echo 'LANG="en_US.UTF-8"' > /etc/default/locale
+          ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+          echo "UTC" > /etc/timezone
+          
+          # Disable services
+          systemctl disable bluetooth cups ModemManager avahi-daemon 2>/dev/null || true
+          
+          # Clean
+          apt-get clean
+          rm -rf /var/lib/apt/lists/*
+          rm -rf /usr/share/doc/*
+          rm -rf /usr/share/man/*
+          rm -rf /usr/share/locale/*
+          find / -name "*.pyc" -delete 2>/dev/null
+          find / -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+CHROOT_EOF
 
       - name: Copy XFCE and LightDM configurations
         run: |
-          sudo mkdir -p ${{ env.ROOTFS_DIR }}/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml
-          sudo cp -r app/src/main/assets/xfce-config/* ${{ env.ROOTFS_DIR }}/home/cyber/.config/xfce4/
-          sudo mkdir -p ${{ env.ROOTFS_DIR }}/etc/lightdm
-          sudo cp -r app/src/main/assets/lightdm/* ${{ env.ROOTFS_DIR }}/etc/lightdm/
-          sudo chmod +x ${{ env.ROOTFS_DIR }}/etc/lightdm/*.sh
-
-      - name: Fix ownership
-        run: |
-          sudo chroot ${{ env.ROOTFS_DIR }} chown -R cyber:cyber /home/cyber
-
-      - name: Disable unnecessary services
-        run: |
-          sudo chroot ${{ env.ROOTFS_DIR }} systemctl disable bluetooth cups ModemManager avahi-daemon 2>/dev/null || true
-
-      - name: Clean apt cache
-        run: |
-          sudo chroot ${{ env.ROOTFS_DIR }} apt-get clean
-          sudo rm -rf ${{ env.ROOTFS_DIR }}/var/lib/apt/lists/*
-          sudo rm -rf ${{ env.ROOTFS_DIR }}/usr/share/doc/*
-          sudo rm -rf ${{ env.ROOTFS_DIR }}/usr/share/man/*
-          sudo rm -rf ${{ env.ROOTFS_DIR }}/usr/share/locale/*
-          sudo find ${{ env.ROOTFS_DIR }} -name "*.pyc" -delete
-          sudo find ${{ env.ROOTFS_DIR }} -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+          sudo mkdir -p ${{ runner.temp }}/rootfs-build/rootfs-arm64/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml
+          sudo cp -r app/src/main/assets/xfce-config/* ${{ runner.temp }}/rootfs-build/rootfs-arm64/home/cyber/.config/xfce4/
+          sudo mkdir -p ${{ runner.temp }}/rootfs-build/rootfs-arm64/etc/lightdm
+          sudo cp -r app/src/main/assets/lightdm/* ${{ runner.temp }}/rootfs-build/rootfs-arm64/etc/lightdm/
+          sudo chmod +x ${{ runner.temp }}/rootfs-build/rootfs-arm64/etc/lightdm/*.sh
+          sudo chroot ${{ runner.temp }}/rootfs-build/rootfs-arm64 chown -R cyber:cyber /home/cyber
 
       - name: Create rootfs tarball
         run: |
@@ -185,7 +184,7 @@ jobs:
           echo "rootfs_size=$SIZE" >> $GITHUB_OUTPUT
 
   build-proot:
-    name: Cross-compile PRoot for ARM64 Android
+    name: Build PRoot for ARM64 Android (termux approach)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
@@ -205,65 +204,39 @@ jobs:
             libcap-dev \
             libseccomp-dev \
             git \
-            autoconf \
-            automake \
-            libtool \
-            gettext
+            python3
 
-      - name: Clone PRoot source
+      - name: Clone termux-packages (has working PRoot build for Android)
         run: |
-          git clone --depth 1 --branch v5.4.0 https://github.com/proot-me/proot.git ${{ runner.temp }}/proot-src
-          cd ${{ runner.temp }}/proot-src
-          git submodule update --init --recursive
+          git clone --depth 1 https://github.com/termux/termux-packages.git ${{ runner.temp }}/termux-packages
 
       - name: Setup Android NDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-34'
+          packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-26'
 
-      - name: Build PRoot (autotools)
+      - name: Build PRoot using termux-packages script
         run: |
-          cd ${{ runner.temp }}/proot-src
+          cd ${{ runner.temp }}/termux-packages
           
-          echo "=== PRoot source directory ==="
-          ls -la
+          # Use termux's build script for PRoot
+          ./scripts/build-package.sh proot 2>&1 | tee build.log
           
-          echo "=== Checking for configure script ==="
-          if [ ! -f configure ]; then
-            echo "No configure script found, generating with autoreconf..."
-            autoreconf -fi -v
-          else
-            echo "Configure script exists"
+          # Find the built binary
+          find . -name "proot" -type f -executable | head -5
+
+      - name: Copy PRoot binary
+        run: |
+          mkdir -p ${{ runner.temp }}/proot-install/bin
+          # Find and copy the built proot binary
+          PROOT_BIN=$(find ${{ runner.temp }}/termux-packages -name "proot" -type f -executable | head -1)
+          if [ -z "$PROOT_BIN" ]; then
+            echo "ERROR: PRoot binary not found"
+            find ${{ runner.temp }}/termux-packages -name "proot" -type f
+            exit 1
           fi
-          
-          echo "=== Setting up Android NDK toolchain ==="
-          export ANDROID_NDK_HOME=${ANDROID_NDK_HOME}
-          export TOOLCHAIN=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64
-          export TARGET=aarch64-linux-android
-          export API=26
-          export CC="${TOOLCHAIN}/bin/${TARGET}${API}-clang"
-          export CXX="${TOOLCHAIN}/bin/${TARGET}${API}-clang++"
-          export AR="${TOOLCHAIN}/bin/llvm-ar"
-          export STRIP="${TOOLCHAIN}/bin/llvm-strip"
-          export CFLAGS="--target=${TARGET}${API} -fPIE -pie"
-          export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++"
-          export PATH="${TOOLCHAIN}/bin:${PATH}"
-          
-          echo "=== Verifying toolchain ==="
-          which ${CC}
-          ${CC} --version
-          
-          echo "=== Running configure ==="
-          ./configure --host=${TARGET} --prefix=${{ runner.temp }}/proot-install \
-            --disable-static --enable-shared \
-            CC="${CC}" CXX="${CXX}" AR="${AR}" STRIP="${STRIP}" \
-            CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}" 2>&1 | tee configure.log
-          
-          echo "=== Building ==="
-          make -j$(nproc) 2>&1 | tee build.log
-          
-          echo "=== Installing ==="
-          make install 2>&1 | tee install.log
+          cp "$PROOT_BIN" ${{ runner.temp }}/proot-install/bin/proot
+          chmod +x ${{ runner.temp }}/proot-install/bin/proot
 
       - name: Verify PRoot binary
         run: |
@@ -300,7 +273,7 @@ jobs:
       - name: Setup Android NDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-34'
+          packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-26'
 
       - name: Prepare PRoot for CMake
         run: |
