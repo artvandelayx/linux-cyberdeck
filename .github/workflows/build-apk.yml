@@ -1,5 +1,5 @@
 # Linux Cyberdeck - Android APK Build Pipeline
-# Simplified, robust build using pre-built binaries and single-stage debootstrap
+# Simplified, robust build using termux-packages for PRoot
 
 name: Build Linux Cyberdeck APK
 
@@ -144,36 +144,40 @@ jobs:
           echo "rootfs_size=$SIZE" >> $GITHUB_OUTPUT
 
   build-proot:
-    name: Get PRoot for ARM64 Android
+    name: Build PRoot for ARM64 Android (via termux-packages)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     outputs:
       proot_path: ${{ steps.set-outputs.outputs.proot_path }}
     steps:
-      - name: Download pre-built PRoot from Termux
+      - name: Checkout termux-packages
+        uses: actions/checkout@v4
+        with:
+          repository: termux/termux-packages
+          path: termux-packages
+          ref: main
+
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-26'
+
+      - name: Build PRoot using termux-packages build script
         run: |
+          cd termux-packages
+          
+          # Install build dependencies
+          ./scripts/setup-ubuntu.sh
+          
+          # Build PRoot package for aarch64
+          ./build-package.sh -a aarch64 -I proot
+          
+          # Find the built binary
+          find . -name "proot" -type f -executable 2>/dev/null | grep -v ".git" | head -20
+          
+          # Copy to output
           mkdir -p ${{ runner.temp }}/proot-install/bin
-          
-          # Download PRoot from Termux's official package repository
-          # Termux provides pre-built binaries for Android ARM64
-          PROOT_URL="https://github.com/termux/termux-packages/releases/download/proot-5.4.0/proot_5.4.0_android-26_arm64.deb"
-          
-          echo "Downloading PRoot from Termux..."
-          wget -q "$PROOT_URL" -O ${{ runner.temp }}/proot.deb || {
-            echo "Trying alternative URL..."
-            PROOT_URL="https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.0_android-26_arm64.deb"
-            wget -q "$PROOT_URL" -O ${{ runner.temp }}/proot.deb || {
-              echo "ERROR: Failed to download PRoot"
-              exit 1
-            }
-          }
-          
-          # Extract the .deb
-          dpkg-deb -x ${{ runner.temp }}/proot.deb ${{ runner.temp }}/proot-extract
-          
-          # Find and copy the proot binary
-          find ${{ runner.temp }}/proot-extract -name "proot" -type f
-          cp $(find ${{ runner.temp }}/proot-extract -name "proot" -type f | head -1) ${{ runner.temp }}/proot-install/bin/proot
+          cp $(find . -name "proot" -type f -executable 2>/dev/null | grep -v ".git" | head -1) ${{ runner.temp }}/proot-install/bin/proot
           chmod +x ${{ runner.temp }}/proot-install/bin/proot
 
       - name: Verify PRoot binary
