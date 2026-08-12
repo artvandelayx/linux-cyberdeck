@@ -1,9 +1,5 @@
 # Linux Cyberdeck - Android APK Build Pipeline
-# This workflow builds the complete APK including:
-# 1. Debian 13 (Trixie) ARM64 rootfs via multistrap (no qemu chroot needed)
-# 2. PRoot built with termux-packages approach (known working for Android)
-# 3. Native libraries (JNI bridge, supervisor, FUSE storage bridge)
-# 4. Final APK assembly
+# Simplified, robust build using pre-built binaries and multistrap
 
 name: Build Linux Cyberdeck APK
 
@@ -32,9 +28,9 @@ env:
 
 jobs:
   build-rootfs:
-    name: Build Debian ARM64 Rootfs (multistrap)
+    name: Build Debian ARM64 Rootfs
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 90
     outputs:
       rootfs_path: ${{ steps.set-outputs.outputs.rootfs_path }}
       rootfs_size: ${{ steps.set-outputs.outputs.rootfs_size }}
@@ -42,11 +38,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install multistrap and dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            multistrap \
+            debootstrap \
             qemu-user-static \
             binfmt-support \
             tar \
@@ -56,65 +52,29 @@ jobs:
             coreutils \
             util-linux
 
-      - name: Create multistrap config
+      - name: Enable ARM64 emulation
         run: |
-          cat > multistrap.conf << 'EOF'
-[General]
-arch=arm64
-directory=rootfs-arm64
-cleanup=true
-noauth=true
-unpack=true
-bootstrap=Debian
-aptsources=Debian
+          sudo systemctl restart systemd-binfmt
+          sudo update-binfmts --enable qemu-aarch64
+          sleep 2
 
-[Debian]
-packages=bash coreutils util-linux procps iproute2 iputils-ping \
-  nano vim-tiny curl wget ca-certificates \
-  git python3 python3-pip python3-venv \
-  openssh-client openssh-server \
-  sudo locales tzdata \
-  systemd-sysv dbus \
-  xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
-  xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin \
-  lightdm lightdm-gtk-greeter \
-  dbus-x11 polkitd \
-  xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
-  xvfb xwayland xauth x11-xserver-utils \
-  mesa-utils glx-alternative-mesa \
-  firefox-esr
-source=http://deb.debian.org/debian
-suite=trixie
-components=main contrib non-free non-free-firmware
-keyring=debian-archive-keyring
-
-[Debian-Updates]
-packages=
-source=http://deb.debian.org/debian
-suite=trixie-updates
-components=main contrib non-free non-free-firmware
-
-[Debian-Security]
-packages=
-source=http://security.debian.org/debian-security
-suite=trixie-security
-components=main contrib non-free non-free-firmware
-EOF
-
-      - name: Run multistrap
+      - name: Create rootfs with debootstrap (minimal, no chroot second stage)
         run: |
-          sudo multistrap -f multistrap.conf -d ${{ runner.temp }}/rootfs-build
-
-      - name: Copy qemu static binary
-        run: |
-          sudo cp /usr/bin/qemu-aarch64-static ${{ runner.temp }}/rootfs-build/rootfs-arm64/usr/bin/
-
-      - name: Configure rootfs (chroot with qemu)
-        run: |
-          sudo chroot ${{ runner.temp }}/rootfs-build/rootfs-arm64 /bin/bash << 'CHROOT_EOF'
-          # Second stage setup
-          /debootstrap/debootstrap --second-stage 2>/dev/null || true
+          mkdir -p ${{ runner.temp }}/rootfs-build
+          ROOTFS_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
           
+          # Single-stage debootstrap with --include for essential packages
+          sudo debootstrap --arch=arm64 --include=bash,coreutils,util-linux,procps,iproute2,ca-certificates,apt \
+            trixie "$ROOTFS_DIR" http://deb.debian.org/debian
+          
+          # Copy qemu for any chroot operations
+          sudo cp /usr/bin/qemu-aarch64-static "$ROOTFS_DIR/usr/bin/"
+
+      - name: Configure rootfs (single chroot with qemu)
+        run: |
+          ROOTFS_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
+          
+          sudo chroot "$ROOTFS_DIR" /bin/bash << 'EOF'
           # Configure apt
           cat > /etc/apt/sources.list << 'APT_EOF'
 deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
@@ -122,13 +82,26 @@ deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-f
 deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
 APT_EOF
           
-          # Update and install any missing packages
           apt-get update
+          
+          # Install packages in one go
           apt-get install -y --no-install-recommends \
-            systemd-sysv dbus || true
+            systemd-sysv dbus \
+            xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
+            xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin \
+            lightdm lightdm-gtk-greeter \
+            dbus-x11 polkitd \
+            xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
+            xvfb xwayland xauth x11-xserver-utils \
+            mesa-utils glx-alternative-mesa \
+            firefox-esr \
+            sudo locales tzdata \
+            git python3 python3-pip python3-venv \
+            openssh-client openssh-server \
+            nano vim-tiny curl wget
           
           # Create cyber user
-          useradd -m -s /bin/bash -G sudo,video,audio,render,plugdev cyber 2>/dev/null || true
+          useradd -m -s /bin/bash -G sudo,video,audio,render,plugdev cyber
           echo "cyber:cyber" | chpasswd
           echo "root:root" | chpasswd
           echo "cyber ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/cyber
@@ -151,16 +124,17 @@ APT_EOF
           rm -rf /usr/share/locale/*
           find / -name "*.pyc" -delete 2>/dev/null
           find / -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-CHROOT_EOF
+EOF
 
       - name: Copy XFCE and LightDM configurations
         run: |
-          sudo mkdir -p ${{ runner.temp }}/rootfs-build/rootfs-arm64/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml
-          sudo cp -r app/src/main/assets/xfce-config/* ${{ runner.temp }}/rootfs-build/rootfs-arm64/home/cyber/.config/xfce4/
-          sudo mkdir -p ${{ runner.temp }}/rootfs-build/rootfs-arm64/etc/lightdm
-          sudo cp -r app/src/main/assets/lightdm/* ${{ runner.temp }}/rootfs-build/rootfs-arm64/etc/lightdm/
-          sudo chmod +x ${{ runner.temp }}/rootfs-build/rootfs-arm64/etc/lightdm/*.sh
-          sudo chroot ${{ runner.temp }}/rootfs-build/rootfs-arm64 chown -R cyber:cyber /home/cyber
+          ROOTFS_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
+          sudo mkdir -p "$ROOTFS_DIR/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml"
+          sudo cp -r app/src/main/assets/xfce-config/* "$ROOTFS_DIR/home/cyber/.config/xfce4/"
+          sudo mkdir -p "$ROOTFS_DIR/etc/lightdm"
+          sudo cp -r app/src/main/assets/lightdm/* "$ROOTFS_DIR/etc/lightdm/"
+          sudo chmod +x "$ROOTFS_DIR/etc/lightdm/*.sh"
+          sudo chroot "$ROOTFS_DIR" chown -R cyber:cyber /home/cyber
 
       - name: Create rootfs tarball
         run: |
@@ -184,58 +158,36 @@ CHROOT_EOF
           echo "rootfs_size=$SIZE" >> $GITHUB_OUTPUT
 
   build-proot:
-    name: Build PRoot for ARM64 Android (termux approach)
+    name: Get PRoot for ARM64 Android
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 30
     outputs:
       proot_path: ${{ steps.set-outputs.outputs.proot_path }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            cmake \
-            pkg-config \
-            libtalloc-dev \
-            libcap-dev \
-            libseccomp-dev \
-            git \
-            python3
-
-      - name: Clone termux-packages (has working PRoot build for Android)
-        run: |
-          git clone --depth 1 https://github.com/termux/termux-packages.git ${{ runner.temp }}/termux-packages
-
-      - name: Setup Android NDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-26'
-
-      - name: Build PRoot using termux-packages script
-        run: |
-          cd ${{ runner.temp }}/termux-packages
-          
-          # Use termux's build script for PRoot
-          ./scripts/build-package.sh proot 2>&1 | tee build.log
-          
-          # Find the built binary
-          find . -name "proot" -type f -executable | head -5
-
-      - name: Copy PRoot binary
+      - name: Download pre-built PRoot from Termux
         run: |
           mkdir -p ${{ runner.temp }}/proot-install/bin
-          # Find and copy the built proot binary
-          PROOT_BIN=$(find ${{ runner.temp }}/termux-packages -name "proot" -type f -executable | head -1)
-          if [ -z "$PROOT_BIN" ]; then
-            echo "ERROR: PRoot binary not found"
-            find ${{ runner.temp }}/termux-packages -name "proot" -type f
-            exit 1
-          fi
-          cp "$PROOT_BIN" ${{ runner.temp }}/proot-install/bin/proot
+          
+          # Download PRoot from Termux's official package repository
+          # Termux provides pre-built binaries for Android ARM64
+          PROOT_URL="https://github.com/termux/termux-packages/releases/download/proot-5.4.0/proot_5.4.0_android-26_arm64.deb"
+          
+          echo "Downloading PRoot from Termux..."
+          wget -q "$PROOT_URL" -O ${{ runner.temp }}/proot.deb || {
+            echo "Trying alternative URL..."
+            PROOT_URL="https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.0_android-26_arm64.deb"
+            wget -q "$PROOT_URL" -O ${{ runner.temp }}/proot.deb || {
+              echo "ERROR: Failed to download PRoot"
+              exit 1
+            }
+          }
+          
+          # Extract the .deb
+          dpkg-deb -x ${{ runner.temp }}/proot.deb ${{ runner.temp }}/proot-extract
+          
+          # Find and copy the proot binary
+          find ${{ runner.temp }}/proot-extract -name "proot" -type f
+          cp $(find ${{ runner.temp }}/proot-extract -name "proot" -type f | head -1) ${{ runner.temp }}/proot-install/bin/proot
           chmod +x ${{ runner.temp }}/proot-install/bin/proot
 
       - name: Verify PRoot binary
