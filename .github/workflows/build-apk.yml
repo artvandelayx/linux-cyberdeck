@@ -160,7 +160,12 @@ jobs:
         with:
           packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-26'
 
-      - name: Cross-compile PRoot with NDK clang
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtalloc-dev libcap-dev pkg-config
+
+      - name: Cross-compile PRoot with NDK clang (verbose)
         run: |
           cd proot-src
           
@@ -176,8 +181,13 @@ jobs:
           export CFLAGS="--target=${TARGET}${API} -fPIE -pie -DANDROID -D__ANDROID_API__=26"
           export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++ -landroid -llog"
           
-          # Build using the provided build script or cmake
-          # proot uses cmake since v5.3.0
+          echo "=== Toolchain ==="
+          echo "CC=$CC"
+          echo "CFLAGS=$CFLAGS"
+          echo "LDFLAGS=$LDFLAGS"
+          $CC --version
+          
+          # Build using cmake with verbose output
           mkdir -p build-android
           cd build-android
           
@@ -192,9 +202,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DWITH_SYSTEM_TALLOC=OFF \
             -DWITH_SYSTEM_LIBCap=OFF \
-            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/proot-install"
+            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/proot-install" \
+            -DCMAKE_VERBOSE_MAKEFILE=ON
           
-          make -j$(nproc)
+          make -j$(nproc) VERBOSE=1
           make install
           
           # Copy to standard location
