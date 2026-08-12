@@ -1,5 +1,5 @@
 # Linux Cyberdeck - Android APK Build Pipeline
-# Simplified, robust build using pre-built binaries and multistrap
+# Simplified, robust build using pre-built binaries and single-stage debootstrap
 
 name: Build Linux Cyberdeck APK
 
@@ -58,73 +58,79 @@ jobs:
           sudo update-binfmts --enable qemu-aarch64
           sleep 2
 
-      - name: Create rootfs with debootstrap (minimal, no chroot second stage)
+      - name: Create rootfs with debootstrap (single-stage with --include)
         run: |
           mkdir -p ${{ runner.temp }}/rootfs-build
           ROOTFS_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
           
-          # Single-stage debootstrap with --include for essential packages
           sudo debootstrap --arch=arm64 --include=bash,coreutils,util-linux,procps,iproute2,ca-certificates,apt \
             trixie "$ROOTFS_DIR" http://deb.debian.org/debian
           
-          # Copy qemu for any chroot operations
           sudo cp /usr/bin/qemu-aarch64-static "$ROOTFS_DIR/usr/bin/"
 
-      - name: Configure rootfs (single chroot with qemu)
+      - name: Configure rootfs (chroot with qemu)
         run: |
           ROOTFS_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
-          
-          sudo chroot "$ROOTFS_DIR" /bin/bash << 'EOF'
-          # Configure apt
-          cat > /etc/apt/sources.list << 'APT_EOF'
+
+          # Write setup script to avoid YAML heredoc issues
+          sudo tee "$ROOTFS_DIR/setup-rootfs.sh" > /dev/null << 'SCRIPT_EOF'
+#!/bin/bash
+set -euo pipefail
+
+# Configure apt
+cat > /etc/apt/sources.list << 'APT_EOF'
 deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
 deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
 deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
 APT_EOF
-          
-          apt-get update
-          
-          # Install packages in one go
-          apt-get install -y --no-install-recommends \
-            systemd-sysv dbus \
-            xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
-            xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin \
-            lightdm lightdm-gtk-greeter \
-            dbus-x11 polkitd \
-            xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
-            xvfb xwayland xauth x11-xserver-utils \
-            mesa-utils glx-alternative-mesa \
-            firefox-esr \
-            sudo locales tzdata \
-            git python3 python3-pip python3-venv \
-            openssh-client openssh-server \
-            nano vim-tiny curl wget
-          
-          # Create cyber user
-          useradd -m -s /bin/bash -G sudo,video,audio,render,plugdev cyber
-          echo "cyber:cyber" | chpasswd
-          echo "root:root" | chpasswd
-          echo "cyber ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/cyber
-          
-          # Locale
-          sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
-          locale-gen
-          echo 'LANG="en_US.UTF-8"' > /etc/default/locale
-          ln -sf /usr/share/zoneinfo/UTC /etc/localtime
-          echo "UTC" > /etc/timezone
-          
-          # Disable services
-          systemctl disable bluetooth cups ModemManager avahi-daemon 2>/dev/null || true
-          
-          # Clean
-          apt-get clean
-          rm -rf /var/lib/apt/lists/*
-          rm -rf /usr/share/doc/*
-          rm -rf /usr/share/man/*
-          rm -rf /usr/share/locale/*
-          find / -name "*.pyc" -delete 2>/dev/null
-          find / -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-EOF
+
+apt-get update
+
+# Install packages in one go
+apt-get install -y --no-install-recommends \
+  systemd-sysv dbus \
+  xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
+  xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin \
+  lightdm lightdm-gtk-greeter \
+  dbus-x11 polkitd \
+  xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
+  xvfb xwayland xauth x11-xserver-utils \
+  mesa-utils glx-alternative-mesa \
+  firefox-esr \
+  sudo locales tzdata \
+  git python3 python3-pip python3-venv \
+  openssh-client openssh-server \
+  nano vim-tiny curl wget
+
+# Create cyber user
+useradd -m -s /bin/bash -G sudo,video,audio,render,plugdev cyber
+echo "cyber:cyber" | chpasswd
+echo "root:root" | chpasswd
+echo "cyber ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/cyber
+
+# Locale
+sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+locale-gen
+echo 'LANG="en_US.UTF-8"' > /etc/default/locale
+ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+echo "UTC" > /etc/timezone
+
+# Disable services
+systemctl disable bluetooth cups ModemManager avahi-daemon 2>/dev/null || true
+
+# Clean
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+rm -rf /usr/share/doc/*
+rm -rf /usr/share/man/*
+rm -rf /usr/share/locale/*
+find / -name "*.pyc" -delete 2>/dev/null
+find / -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+SCRIPT_EOF
+
+          sudo chmod +x "$ROOTFS_DIR/setup-rootfs.sh"
+          sudo chroot "$ROOTFS_DIR" /setup-rootfs.sh
+          sudo rm "$ROOTFS_DIR/setup-rootfs.sh"
 
       - name: Copy XFCE and LightDM configurations
         run: |
