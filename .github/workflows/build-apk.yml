@@ -1,5 +1,5 @@
 # Linux Cyberdeck - Android APK Build Pipeline
-# Reliable build: cross-compile PRoot directly with Android NDK
+# PRoot: brute-force download from Termux package repo (multiple URL patterns)
 
 name: Build Linux Cyberdeck APK
 
@@ -142,80 +142,88 @@ jobs:
           echo "rootfs_size=$SIZE" >> $GITHUB_OUTPUT
 
   build-proot:
-    name: Cross-compile PRoot for ARM64 Android (NDK direct)
+    name: Get PRoot for ARM64 Android (brute-force Termux URLs)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     outputs:
       proot_path: ${{ steps.set-outputs.outputs.proot_path }}
     steps:
-      - name: Checkout PRoot source
-        uses: actions/checkout@v4
-        with:
-          repository: proot-me/proot
-          path: proot-src
-          ref: v5.4.0
-
-      - name: Setup Android NDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-26'
-
-      - name: Install build dependencies
+      - name: Try all known Termux proot package URLs
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libtalloc-dev libcap-dev pkg-config
-
-      - name: Cross-compile PRoot with NDK clang (verbose)
-        run: |
-          cd proot-src
-          
-          # Android NDK toolchain
-          TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
-          TARGET="aarch64-linux-android"
-          API=26
-          
-          export CC="${TOOLCHAIN}/bin/${TARGET}${API}-clang"
-          export CXX="${TOOLCHAIN}/bin/${TARGET}${API}-clang++"
-          export AR="${TOOLCHAIN}/bin/llvm-ar"
-          export STRIP="${TOOLCHAIN}/bin/llvm-strip"
-          export CFLAGS="--target=${TARGET}${API} -fPIE -pie -DANDROID -D__ANDROID_API__=26"
-          export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++ -landroid -llog"
-          
-          echo "=== Toolchain ==="
-          echo "CC=$CC"
-          echo "CFLAGS=$CFLAGS"
-          echo "LDFLAGS=$LDFLAGS"
-          $CC --version
-          
-          # Build using cmake with verbose output
-          mkdir -p build-android
-          cd build-android
-          
-          cmake .. \
-            -DCMAKE_C_COMPILER="$CC" \
-            -DCMAKE_CXX_COMPILER="$CXX" \
-            -DCMAKE_AR="$AR" \
-            -DCMAKE_STRIP="$STRIP" \
-            -DCMAKE_C_FLAGS="$CFLAGS" \
-            -DCMAKE_CXX_FLAGS="$CFLAGS" \
-            -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DWITH_SYSTEM_TALLOC=OFF \
-            -DWITH_SYSTEM_LIBCap=OFF \
-            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/proot-install" \
-            -DCMAKE_VERBOSE_MAKEFILE=ON
-          
-          make -j$(nproc) VERBOSE=1
-          make install
-          
-          # Copy to standard location
           mkdir -p ${{ runner.temp }}/proot-install/bin
-          cp ${{ runner.temp }}/proot-install/bin/proot ${{ runner.temp }}/proot-install/bin/proot
+          
+          # All known URL patterns for Termux proot aarch64 packages
+          URLs=(
+            # GitHub releases (termux-packages repo)
+            "https://github.com/termux/termux-packages/releases/download/proot-5.4.2/proot_5.4.2_android-26_aarch64.deb"
+            "https://github.com/termux/termux-packages/releases/download/proot-5.4.0/proot_5.4.0_android-26_aarch64.deb"
+            "https://github.com/termux/termux-packages/releases/download/proot-5.3.6/proot_5.3.6_android-26_aarch64.deb"
+            
+            # Termux package repository (packages.termux.org)
+            "https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.2_android-26_aarch64.deb"
+            "https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.0_android-26_aarch64.deb"
+            "https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.3.6_android-26_aarch64.deb"
+            
+            # Alternative naming (arm64 vs aarch64)
+            "https://github.com/termux/termux-packages/releases/download/proot-5.4.2/proot_5.4.2_android-26_arm64.deb"
+            "https://github.com/termux/termux-packages/releases/download/proot-5.4.0/proot_5.4.0_android-26_arm64.deb"
+            "https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.2_android-26_arm64.deb"
+            "https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.0_android-26_arm64.deb"
+          )
+          
+          SUCCESS=0
+          for URL in "${URLs[@]}"; do
+            echo "========================================"
+            echo "Trying: $URL"
+            echo "========================================"
+            
+            if wget -q --timeout=30 --tries=2 "$URL" -O ${{ runner.temp }}/proot.deb 2>&1; then
+              echo "SUCCESS: Downloaded from $URL"
+              
+              # Verify it's a valid .deb
+              if file ${{ runner.temp }}/proot.deb | grep -q "Debian binary package"; then
+                echo "Valid .deb package confirmed"
+                
+                # Extract
+                dpkg-deb -x ${{ runner.temp }}/proot.deb ${{ runner.temp }}/proot-extract
+                
+                # Find proot binary
+                PROOT_BIN=$(find ${{ runner.temp }}/proot-extract -name "proot" -type f 2>/dev/null | head -1)
+                
+                if [ -n "$PROOT_BIN" ] && [ -f "$PROOT_BIN" ]; then
+                  echo "Found proot binary at: $PROOT_BIN"
+                  cp "$PROOT_BIN" ${{ runner.temp }}/proot-install/bin/proot
+                  chmod +x ${{ runner.temp }}/proot-install/bin/proot
+                  SUCCESS=1
+                  echo "DOWNLOAD_URL=$URL" >> $GITHUB_ENV
+                  break
+                else
+                  echo "No proot binary found in extracted package"
+                fi
+              else
+                echo "Downloaded file is not a valid .deb"
+              fi
+            else
+              echo "FAILED: $URL"
+            fi
+            echo ""
+          done
+          
+          if [ $SUCCESS -eq 0 ]; then
+            echo "::error::ALL URLs FAILED. Could not download PRoot from Termux."
+            exit 1
+          fi
 
       - name: Verify PRoot binary
         run: |
+          echo "=== PRoot Binary Info ==="
           file ${{ runner.temp }}/proot-install/bin/proot
+          echo ""
+          echo "=== PRoot Version ==="
           ${{ runner.temp }}/proot-install/bin/proot --version
+          echo ""
+          echo "=== Downloaded from ==="
+          echo "${{ env.DOWNLOAD_URL }}"
 
       - name: Upload PRoot artifact
         uses: actions/upload-artifact@v4
