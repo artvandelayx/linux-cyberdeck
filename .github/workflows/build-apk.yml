@@ -1,5 +1,5 @@
 # Linux Cyberdeck - Android APK Build Pipeline
-# PRoot: brute-force download from Termux package repo (multiple URL patterns)
+# multistrap rootfs (no qemu) + official proot static binary
 
 name: Build Linux Cyberdeck APK
 
@@ -28,9 +28,9 @@ env:
 
 jobs:
   build-rootfs:
-    name: Build Debian ARM64 Rootfs
+    name: Build Debian ARM64 Rootfs (multistrap)
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 60
     outputs:
       rootfs_path: ${{ steps.set-outputs.outputs.rootfs_path }}
       rootfs_size: ${{ steps.set-outputs.outputs.rootfs_size }}
@@ -38,69 +38,90 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install multistrap
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            debootstrap \
-            qemu-user-static \
-            binfmt-support \
-            tar \
-            gzip \
-            xz-utils \
-            sudo \
-            coreutils \
-            util-linux
+          sudo apt-get install -y multistrap tar gzip xz-utils
 
-      - name: Enable ARM64 emulation
+      - name: Create multistrap config
         run: |
+          cat > ${{ runner.temp }}/multistrap.conf << 'EOF'
+[General]
+arch=arm64
+directory=${{ runner.temp }}/rootfs-build/rootfs-arm64
+bootstrap=Debian
+aptsources=Debian
+unpack=true
+config=debian
+explicit-deps=true
+
+[Debian]
+packages=bash coreutils util-linux procps iproute2 ca-certificates apt \
+  systemd-sysv dbus \
+  xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
+  xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin \
+  lightdm lightdm-gtk-greeter \
+  dbus-x11 policykit-1 \
+  xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
+  xvfb xwayland xauth x11-xserver-utils \
+  mesa-utils glx-alternative-mesa \
+  firefox-esr \
+  sudo locales tzdata \
+  git python3 python3-pip python3-venv \
+  openssh-client openssh-server \
+  nano vim-tiny curl wget
+source=http://deb.debian.org/debian
+suite=trixie
+components=main contrib non-free non-free-firmware
+keyring=debian-archive-keyring
+
+[Debian-Updates]
+source=http://deb.debian.org/debian
+suite=trixie-updates
+components=main contrib non-free non-free-firmware
+keyring=debian-archive-keyring
+
+[Debian-Security]
+source=http://security.debian.org/debian-security
+suite=trixie-security
+components=main contrib non-free non-free-firmware
+keyring=debian-archive-keyring
+EOF
+
+      - name: Run multistrap (downloads & unpacks .debs directly - no qemu)
+        run: |
+          sudo multistrap -f ${{ runner.temp }}/multistrap.conf -d ${{ runner.temp }}/rootfs-build/rootfs-arm64
+
+      - name: Configure rootfs (single chroot with qemu only for post-install)
+        run: |
+          ROOTFS_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
+          
+          # Install qemu only for this chroot
+          sudo apt-get update && sudo apt-get install -y qemu-user-static binfmt-support
           sudo systemctl restart systemd-binfmt
           sudo update-binfmts --enable qemu-aarch64
           sleep 2
-
-      - name: Create rootfs with debootstrap (single-stage with --include)
-        run: |
-          mkdir -p ${{ runner.temp }}/rootfs-build
-          ROOTFS_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
-          
-          sudo debootstrap --arch=arm64 --include=bash,coreutils,util-linux,procps,iproute2,ca-certificates,apt \
-            trixie "$ROOTFS_DIR" http://deb.debian.org/debian
-          
           sudo cp /usr/bin/qemu-aarch64-static "$ROOTFS_DIR/usr/bin/"
-
-      - name: Configure rootfs (chroot with qemu)
-        run: |
-          ROOTFS_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
 
           printf 'deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware\ndeb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware\ndeb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware\n' | sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null
 
           sudo chroot "$ROOTFS_DIR" /bin/bash -c "
             set -euo pipefail
             apt-get update
-            apt-get install -y --no-install-recommends \
-              systemd-sysv dbus \
-              xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
-              xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin \
-              lightdm lightdm-gtk-greeter \
-              dbus-x11 polkitd \
-              xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
-              xvfb xwayland xauth x11-xserver-utils \
-              mesa-utils glx-alternative-mesa \
-              firefox-esr \
-              sudo locales tzdata \
-              git python3 python3-pip python3-venv \
-              openssh-client openssh-server \
-              nano vim-tiny curl wget
+            # Create cyber user
             useradd -m -s /bin/bash -G sudo,video,audio,render,plugdev cyber
             echo 'cyber:cyber' | chpasswd
             echo 'root:root' | chpasswd
             echo 'cyber ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/cyber
+            # Locale
             sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
             locale-gen
             echo 'LANG=\"en_US.UTF-8\"' > /etc/default/locale
             ln -sf /usr/share/zoneinfo/UTC /etc/localtime
             echo 'UTC' > /etc/timezone
+            # Disable services
             systemctl disable bluetooth cups ModemManager avahi-daemon 2>/dev/null || true
+            # Clean
             apt-get clean
             rm -rf /var/lib/apt/lists/*
             rm -rf /usr/share/doc/*
@@ -142,75 +163,57 @@ jobs:
           echo "rootfs_size=$SIZE" >> $GITHUB_OUTPUT
 
   build-proot:
-    name: Get PRoot for ARM64 Android (brute-force Termux URLs)
+    name: Get PRoot for ARM64 Android (official static release)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     outputs:
       proot_path: ${{ steps.set-outputs.outputs.proot_path }}
     steps:
-      - name: Try all known Termux proot package URLs
+      - name: Download official proot static binary (multiple patterns)
         run: |
           mkdir -p ${{ runner.temp }}/proot-install/bin
           
-          # All known URL patterns for Termux proot aarch64 packages
+          # proot-me/proot releases - static aarch64 binaries
           URLs=(
-            # GitHub releases (termux-packages repo)
-            "https://github.com/termux/termux-packages/releases/download/proot-5.4.2/proot_5.4.2_android-26_aarch64.deb"
-            "https://github.com/termux/termux-packages/releases/download/proot-5.4.0/proot_5.4.0_android-26_aarch64.deb"
-            "https://github.com/termux/termux-packages/releases/download/proot-5.3.6/proot_5.3.6_android-26_aarch64.deb"
+            # v5.4.0 - current
+            "https://github.com/proot-me/proot/releases/download/v5.4.0/proot-v5.4.0-aarch64-static.tar.gz"
+            "https://github.com/proot-me/proot/releases/download/v5.4.0/proot-v5.4.0-aarch64.tar.gz"
+            "https://github.com/proot-me/proot/releases/download/v5.4.0/proot-static-aarch64.tar.gz"
             
-            # Termux package repository (packages.termux.org)
-            "https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.2_android-26_aarch64.deb"
-            "https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.0_android-26_aarch64.deb"
-            "https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.3.6_android-26_aarch64.deb"
+            # v5.3.6 - previous
+            "https://github.com/proot-me/proot/releases/download/v5.3.6/proot-v5.3.6-aarch64-static.tar.gz"
+            "https://github.com/proot-me/proot/releases/download/v5.3.6/proot-v5.3.6-aarch64.tar.gz"
             
-            # Alternative naming (arm64 vs aarch64)
-            "https://github.com/termux/termux-packages/releases/download/proot-5.4.2/proot_5.4.2_android-26_arm64.deb"
-            "https://github.com/termux/termux-packages/releases/download/proot-5.4.0/proot_5.4.0_android-26_arm64.deb"
-            "https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.2_android-26_arm64.deb"
-            "https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.0_android-26_arm64.deb"
+            # generic
+            "https://github.com/proot-me/proot/releases/latest/download/proot-aarch64-static.tar.gz"
           )
           
           SUCCESS=0
           for URL in "${URLs[@]}"; do
-            echo "========================================"
             echo "Trying: $URL"
-            echo "========================================"
-            
-            if wget -q --timeout=30 --tries=2 "$URL" -O ${{ runner.temp }}/proot.deb 2>&1; then
-              echo "SUCCESS: Downloaded from $URL"
+            if wget -q --timeout=30 --tries=2 "$URL" -O ${{ runner.temp }}/proot.tar.gz 2>&1; then
+              echo "Downloaded from: $URL"
+              tar -xzf ${{ runner.temp }}/proot.tar.gz -C ${{ runner.temp }}/proot-install/bin/ 2>&1 || true
               
-              # Verify it's a valid .deb
-              if file ${{ runner.temp }}/proot.deb | grep -q "Debian binary package"; then
-                echo "Valid .deb package confirmed"
-                
-                # Extract
-                dpkg-deb -x ${{ runner.temp }}/proot.deb ${{ runner.temp }}/proot-extract
-                
-                # Find proot binary
-                PROOT_BIN=$(find ${{ runner.temp }}/proot-extract -name "proot" -type f 2>/dev/null | head -1)
-                
-                if [ -n "$PROOT_BIN" ] && [ -f "$PROOT_BIN" ]; then
-                  echo "Found proot binary at: $PROOT_BIN"
-                  cp "$PROOT_BIN" ${{ runner.temp }}/proot-install/bin/proot
-                  chmod +x ${{ runner.temp }}/proot-install/bin/proot
-                  SUCCESS=1
-                  echo "DOWNLOAD_URL=$URL" >> $GITHUB_ENV
-                  break
-                else
-                  echo "No proot binary found in extracted package"
-                fi
-              else
-                echo "Downloaded file is not a valid .deb"
+              # Find the binary (might be in subdir)
+              PROOT_BIN=$(find ${{ runner.temp }}/proot-install/bin -name "proot" -type f 2>/dev/null | head -1)
+              
+              if [ -n "$PROOT_BIN" ] && [ -f "$PROOT_BIN" ]; then
+                echo "Found proot at: $PROOT_BIN"
+                cp "$PROOT_BIN" ${{ runner.temp }}/proot-install/bin/proot
+                chmod +x ${{ runner.temp }}/proot-install/bin/proot
+                SUCCESS=1
+                echo "DOWNLOAD_URL=$URL" >> $GITHUB_ENV
+                break
               fi
+              echo "No proot binary found in archive"
             else
-              echo "FAILED: $URL"
+              echo "Failed: $URL"
             fi
-            echo ""
           done
           
           if [ $SUCCESS -eq 0 ]; then
-            echo "::error::ALL URLs FAILED. Could not download PRoot from Termux."
+            echo "::error::ALL proot URLs FAILED"
             exit 1
           fi
 
