@@ -1,5 +1,5 @@
 # Linux Cyberdeck - Android APK Build Pipeline
-# Simplified, robust build using termux-packages for PRoot
+# Reliable build using official proot static binary
 
 name: Build Linux Cyberdeck APK
 
@@ -144,40 +144,29 @@ jobs:
           echo "rootfs_size=$SIZE" >> $GITHUB_OUTPUT
 
   build-proot:
-    name: Build PRoot for ARM64 Android (via termux-packages)
+    name: Get PRoot for ARM64 Android (official static binary)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 15
     outputs:
       proot_path: ${{ steps.set-outputs.outputs.proot_path }}
     steps:
-      - name: Checkout termux-packages
-        uses: actions/checkout@v4
-        with:
-          repository: termux/termux-packages
-          path: termux-packages
-          ref: main
-
-      - name: Setup Android NDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-26'
-
-      - name: Build PRoot using termux-packages build script
+      - name: Download official proot static binary
         run: |
-          cd termux-packages
-          
-          # Install build dependencies
-          ./scripts/setup-ubuntu.sh
-          
-          # Build PRoot package for aarch64
-          ./build-package.sh -a aarch64 -I proot
-          
-          # Find the built binary
-          find . -name "proot" -type f -executable 2>/dev/null | grep -v ".git" | head -20
-          
-          # Copy to output
           mkdir -p ${{ runner.temp }}/proot-install/bin
-          cp $(find . -name "proot" -type f -executable 2>/dev/null | grep -v ".git" | head -1) ${{ runner.temp }}/proot-install/bin/proot
+          
+          # Official proot release - static aarch64 binary works on Android
+          PROOT_URL="https://github.com/proot-me/proot/releases/download/v5.4.0/proot-v5.4.0-aarch64-static.tar.gz"
+          
+          echo "Downloading official proot static binary..."
+          wget -q "$PROOT_URL" -O ${{ runner.temp }}/proot.tar.gz || {
+            echo "ERROR: Failed to download proot from official release"
+            exit 1
+          }
+          
+          # Extract
+          tar -xzf ${{ runner.temp }}/proot.tar.gz -C ${{ runner.temp }}/proot-install/bin/
+          
+          # The archive contains proot binary directly
           chmod +x ${{ runner.temp }}/proot-install/bin/proot
 
       - name: Verify PRoot binary
