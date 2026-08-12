@@ -1,5 +1,5 @@
 # Linux Cyberdeck - Android APK Build Pipeline
-# Reliable build using Termux's official Android-built PRoot package
+# Reliable build: cross-compile PRoot directly with Android NDK
 
 name: Build Linux Cyberdeck APK
 
@@ -72,10 +72,8 @@ jobs:
         run: |
           ROOTFS_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
 
-          # Write sources.list with printf (no heredoc at all)
           printf 'deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware\ndeb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware\ndeb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware\n' | sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null
 
-          # Run all setup commands directly in chroot
           sudo chroot "$ROOTFS_DIR" /bin/bash -c "
             set -euo pipefail
             apt-get update
@@ -144,41 +142,64 @@ jobs:
           echo "rootfs_size=$SIZE" >> $GITHUB_OUTPUT
 
   build-proot:
-    name: Get PRoot for ARM64 Android (from Termux package repo)
+    name: Cross-compile PRoot for ARM64 Android (NDK direct)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     outputs:
       proot_path: ${{ steps.set-outputs.outputs.proot_path }}
     steps:
-      - name: Download PRoot from Termux package repository
+      - name: Checkout PRoot source
+        uses: actions/checkout@v4
+        with:
+          repository: proot-me/proot
+          path: proot-src
+          ref: v5.4.0
+
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-26'
+
+      - name: Cross-compile PRoot with NDK clang
         run: |
+          cd proot-src
+          
+          # Android NDK toolchain
+          TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+          TARGET="aarch64-linux-android"
+          API=26
+          
+          export CC="${TOOLCHAIN}/bin/${TARGET}${API}-clang"
+          export CXX="${TOOLCHAIN}/bin/${TARGET}${API}-clang++"
+          export AR="${TOOLCHAIN}/bin/llvm-ar"
+          export STRIP="${TOOLCHAIN}/bin/llvm-strip"
+          export CFLAGS="--target=${TARGET}${API} -fPIE -pie -DANDROID -D__ANDROID_API__=26"
+          export LDFLAGS="--target=${TARGET}${API} -fPIE -pie -static-libstdc++ -landroid -llog"
+          
+          # Build using the provided build script or cmake
+          # proot uses cmake since v5.3.0
+          mkdir -p build-android
+          cd build-android
+          
+          cmake .. \
+            -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_AR="$AR" \
+            -DCMAKE_STRIP="$STRIP" \
+            -DCMAKE_C_FLAGS="$CFLAGS" \
+            -DCMAKE_CXX_FLAGS="$CFLAGS" \
+            -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWITH_SYSTEM_TALLOC=OFF \
+            -DWITH_SYSTEM_LIBCap=OFF \
+            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/proot-install"
+          
+          make -j$(nproc)
+          make install
+          
+          # Copy to standard location
           mkdir -p ${{ runner.temp }}/proot-install/bin
-          
-          # Termux package repository - this is where Termux installs proot from
-          # The package name follows: proot_<version>_android-<api>_<arch>.deb
-          PROOT_URL="https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.0_android-26_aarch64.deb"
-          
-          echo "Downloading PRoot from Termux package repository..."
-          wget -q "$PROOT_URL" -O ${{ runner.temp }}/proot.deb || {
-            echo "Trying without android- prefix..."
-            PROOT_URL="https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.0_android-26_arm64.deb"
-            wget -q "$PROOT_URL" -O ${{ runner.temp }}/proot.deb || {
-              echo "Trying version 5.4.2..."
-              PROOT_URL="https://packages.termux.org/apt/termux-main/pool/main/p/proot/proot_5.4.2_android-26_aarch64.deb"
-              wget -q "$PROOT_URL" -O ${{ runner.temp }}/proot.deb || {
-                echo "ERROR: Failed to download PRoot from Termux repository"
-                exit 1
-              }
-            }
-          }
-          
-          # Extract the .deb
-          dpkg-deb -x ${{ runner.temp }}/proot.deb ${{ runner.temp }}/proot-extract
-          
-          # Find and copy the proot binary (typically in data/data/com.termux/files/usr/bin/proot)
-          find ${{ runner.temp }}/proot-extract -name "proot" -type f
-          cp $(find ${{ runner.temp }}/proot-extract -name "proot" -type f | head -1) ${{ runner.temp }}/proot-install/bin/proot
-          chmod +x ${{ runner.temp }}/proot-install/bin/proot
+          cp ${{ runner.temp }}/proot-install/bin/proot ${{ runner.temp }}/proot-install/bin/proot
 
       - name: Verify PRoot binary
         run: |
@@ -326,6 +347,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: app/build/outputs/apk/release/app-release.apk
-          generate_release_notions: true
+          generate_release_notes: true
           draft: false
           prerelease: false
