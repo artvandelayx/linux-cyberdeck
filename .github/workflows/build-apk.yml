@@ -234,11 +234,21 @@ jobs:
       - name: Verify APK contents and signature
         run: |
           set -euxo pipefail
-          "${ANDROID_HOME}/build-tools/34.0.0/apksigner" verify --verbose linux-cyberdeck.apk
+          if ! "${ANDROID_HOME}/build-tools/34.0.0/apksigner" verify --verbose linux-cyberdeck.apk; then
+            echo "::error title=APK verification failed::The generated APK signature is invalid."
+            exit 1
+          fi
           unzip -Z1 linux-cyberdeck.apk > apk-contents.txt
-          grep -Fxq 'assets/rootfs-arm64.tar.gz' apk-contents.txt
-          grep -Fxq 'lib/arm64-v8a/libproot.so' apk-contents.txt
-          grep -Fxq 'lib/arm64-v8a/liblinuxcyberdeck_jni.so' apk-contents.txt
+          for required_entry in \
+            'assets/rootfs-arm64.tar.gz' \
+            'lib/arm64-v8a/libproot.so' \
+            'lib/arm64-v8a/liblinuxcyberdeck_jni.so'; do
+            if ! grep -Fxq "$required_entry" apk-contents.txt; then
+              echo "::error title=APK content missing::$required_entry"
+              grep -E 'rootfs|proot|linuxcyberdeck|^lib/' apk-contents.txt || true
+              exit 1
+            fi
+          done
           sha256sum linux-cyberdeck.apk | tee linux-cyberdeck.apk.sha256
           ls -lh linux-cyberdeck.apk
 
