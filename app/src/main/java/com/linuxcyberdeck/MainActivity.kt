@@ -1,12 +1,7 @@
 package com.linuxcyberdeck
 
 import android.content.Intent
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.os.Environment
-import android.provider.Settings
-import android.util.Log
 import android.view.View
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -14,18 +9,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.google.android.material.snackbar.Snackbar
 import com.linuxcyberdeck.databinding.ActivityMainBinding
 import com.linuxcyberdeck.native.LinuxNativeBridge
 import com.linuxcyberdeck.session.LinuxSessionManager
 import com.linuxcyberdeck.session.LinuxSessionState
 import com.linuxcyberdeck.session.LinuxSessionStatus
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import timber.log.Timber
 
 class MainActivity : ComponentActivity() {
 
@@ -46,7 +37,6 @@ class MainActivity : ComponentActivity() {
 
         setupObservers()
         setupClickListeners()
-        checkStoragePermissions()
     }
 
     private fun setupObservers() {
@@ -70,6 +60,7 @@ class MainActivity : ComponentActivity() {
             when (status?.state) {
                 LinuxSessionState.NOT_INSTALLED -> showInstallDialog()
                 LinuxSessionState.INSTALLED, LinuxSessionState.ERROR -> sessionManager.startLinux()
+                LinuxSessionState.RUNNING -> openLinuxDesktop()
                 else -> {}
             }
         }
@@ -206,10 +197,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startInstallation() {
-        // Debian 13 ARM64 rootfs download URL (example - would be a real mirror)
-        val downloadUrl = "https://deb.debian.org/debian/dists/trixie/main/installer-arm64/current/images/netboot/debian-installer/arm64/initrd.gz"
-        val expectedSize = 4L * 1024 * 1024 * 1024 // 4 GB estimate
-        sessionManager.installRootfs(downloadUrl, expectedSize)
+        sessionManager.installRootfs()
     }
 
     private fun showError(message: String) {
@@ -218,31 +206,49 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openLinuxDesktop() {
-        // Launch XFCE desktop via the native layer
-        // This would typically involve launching a VNC viewer or similar
-        // For now, we'll show a toast and could launch an intent
-        Snackbar.make(binding.root, "Opening Linux desktop…", Snackbar.LENGTH_SHORT).show()
-        // TODO: Launch XFCE display (VNC/X11 forward)
+        startActivity(Intent(this, DesktopActivity::class.java))
     }
 
     private fun openTerminal() {
-        Snackbar.make(binding.root, "Opening terminal…", Snackbar.LENGTH_SHORT).show()
-        // TODO: Launch terminal (xfce4-terminal via X11)
+        openLinuxDesktop()
     }
 
     private fun openFirefox() {
-        Snackbar.make(binding.root, "Opening Firefox…", Snackbar.LENGTH_SHORT).show()
-        // TODO: Launch Firefox via X11
+        openLinuxDesktop()
     }
 
     private fun openFiles() {
-        Snackbar.make(binding.root, "Opening file manager…", Snackbar.LENGTH_SHORT).show()
-        // TODO: Launch Thunar via X11
+        openLinuxDesktop()
     }
 
     private fun openSettings() {
-        // TODO: Open settings activity/fragment
-        Snackbar.make(binding.root, "Settings coming soon", Snackbar.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val autoStart = sessionManager.getAutoStart()
+            val touchMode = sessionManager.getTouchMode()
+            val labels = arrayOf(
+                getString(R.string.settings_auto_start),
+                getString(R.string.settings_touch_mode),
+                getString(R.string.settings_diagnostics)
+            )
+            val checked = booleanArrayOf(autoStart, touchMode, false)
+            MaterialAlertDialogBuilder(this@MainActivity)
+                .setTitle(R.string.settings_title)
+                .setMultiChoiceItems(labels, checked) { _, which, enabled ->
+                    lifecycleScope.launch {
+                        when (which) {
+                            0 -> {
+                                sessionManager.setAutoStart(enabled)
+                                getSharedPreferences("linux_cyberdeck_prefs", MODE_PRIVATE)
+                                    .edit().putBoolean("auto_start_enabled", enabled).apply()
+                            }
+                            1 -> sessionManager.setTouchMode(enabled)
+                            2 -> if (enabled) openDiagnostics()
+                        }
+                    }
+                }
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+        }
     }
 
     private fun openDiagnostics() {
@@ -279,20 +285,6 @@ class MainActivity : ComponentActivity() {
             .setMessage(builder.toString())
             .setPositiveButton("OK", null)
             .show()
-    }
-
-    private fun checkStoragePermissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                try {
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                    intent.data = Uri.parse("package:$packageName")
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    Timber.w(e, "Could not open storage permission settings")
-                }
-            }
-        }
     }
 
     companion object {

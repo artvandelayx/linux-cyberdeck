@@ -59,7 +59,8 @@ Linux Cyberdeck is a self-contained Android application that provides a complete
 - Tests X connection readiness
 
 #### Storage Bridge (`storage_bridge.c`)
-- FUSE-based filesystem bridge (placeholder)
+- SAF document-tree bridge. Android does not expose `/dev/fuse` to ordinary apps,
+  so selected trees use `ContentResolver` rather than fake POSIX mounts.
 - Mounts Android SAF URIs as Linux directories
 - Translates POSIX calls → ContentResolver operations
 - Manages multiple simultaneous mounts

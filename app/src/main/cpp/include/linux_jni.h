@@ -13,7 +13,7 @@ extern "C" {
 // Initialize session
 JNIEXPORT jint JNICALL
 Java_com_linuxcyberdeck_native_LinuxNativeBridge_initializeSession(
-    JNIEnv* env, jclass clazz, jstring appFilesDir, jstring packageName);
+    JNIEnv* env, jclass clazz, jstring appFilesDir, jstring packageName, jstring prootPath);
 
 // Start Linux session
 JNIEXPORT jint JNICALL
@@ -48,12 +48,12 @@ Java_com_linuxcyberdeck_native_LinuxNativeBridge_cancelInstallation(
 // Mount shared storage
 JNIEXPORT jint JNICALL
 Java_com_linuxcyberdeck_native_LinuxNativeBridge_mountSharedStorage(
-    JNIEnv* env, jclass clazz, jstring androidPath, jstring linuxMountPoint);
+    JNIEnv* env, jclass clazz, jstring androidPath, jstring linuxMountPoint, jobject storageManager);
 
 // Unmount shared storage
 JNIEXPORT jint JNICALL
 Java_com_linuxcyberdeck_native_LinuxNativeBridge_unmountSharedStorage(
-    JNIEnv* env, jclass clazz, jstring linuxMountPoint);
+    JNIEnv* env, jclass clazz, jstring linuxMountPoint, jobject storageManager);
 
 // List mounted storages
 JNIEXPORT jobjectArray JNICALL

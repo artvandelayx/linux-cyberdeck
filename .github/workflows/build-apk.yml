@@ -1,375 +1,204 @@
-# Linux Cyberdeck - Android APK Build Pipeline
-# multistrap rootfs (no qemu) + official proot static binary
-
 name: Build Linux Cyberdeck APK
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
     tags: ['v*']
-  pull_request:
-    branches: [main, master]
   workflow_dispatch:
-    inputs:
-      build_type:
-        description: 'Build type'
-        required: true
-        default: 'release'
-        type: choice
-        options:
-          - release
-          - debug
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-cyberdeck-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
-  ANDROID_SDK_VERSION: '34'
-  ANDROID_NDK_VERSION: '27.0.12077973'
-  DEBIAN_VERSION: 'trixie'
-  DEBIAN_ARCH: 'arm64'
+  NDK_VERSION: '27.0.12077973'
 
 jobs:
-  build-rootfs:
-    name: Build Debian ARM64 Rootfs (multistrap)
+  rootfs:
+    name: Debian 13 ARM64 rootfs
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    outputs:
-      rootfs_path: ${{ steps.set-outputs.outputs.rootfs_path }}
-      rootfs_size: ${{ steps.set-outputs.outputs.rootfs_size }}
+    timeout-minutes: 180
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install multistrap
+      - name: Install rootfs build tools
         run: |
+          set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y multistrap tar gzip xz-utils
+          sudo apt-get install -y --no-install-recommends debootstrap qemu-user-static ca-certificates
 
-      - name: Create multistrap config
+      - name: Build and configure Debian
         run: |
-          MULTISTRAP_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
-          cat > ${{ runner.temp }}/multistrap.conf << EOF
-[General]
-arch=arm64
-directory=$MULTISTRAP_DIR
-bootstrap=Debian
-aptsources=Debian
-unpack=true
-config=debian
-explicit-deps=true
+          set -euxo pipefail
+          ROOTFS="${RUNNER_TEMP}/rootfs-arm64"
+          MIRROR="https://deb.debian.org/debian"
+          sudo debootstrap --arch=arm64 --foreign --variant=minbase trixie "$ROOTFS" "$MIRROR"
+          sudo cp /usr/bin/qemu-aarch64-static "$ROOTFS/usr/bin/"
+          sudo cp /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
+          sudo chroot "$ROOTFS" /usr/bin/qemu-aarch64-static /debootstrap/debootstrap --second-stage
+          printf '#!/bin/sh\nexit 101\n' | sudo tee "$ROOTFS/usr/sbin/policy-rc.d" >/dev/null
+          sudo chmod 0755 "$ROOTFS/usr/sbin/policy-rc.d"
 
-[Debian]
-packages=bash coreutils util-linux procps iproute2 ca-certificates apt \
-  systemd-sysv dbus \
-  xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
-  xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin \
-  lightdm lightdm-gtk-greeter \
-  dbus-x11 policykit-1 \
-  xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
-  xvfb xwayland xauth x11-xserver-utils \
-  mesa-utils glx-alternative-mesa \
-  firefox-esr \
-  sudo locales tzdata \
-  git python3 python3-pip python3-venv \
-  openssh-client openssh-server \
-  nano vim-tiny curl wget
-source=http://deb.debian.org/debian
-suite=trixie
-components=main contrib non-free non-free-firmware
-keyring=debian-archive-keyring
+          sudo tee "$ROOTFS/etc/apt/sources.list" >/dev/null <<'EOF'
+          deb https://deb.debian.org/debian trixie main
+          deb https://deb.debian.org/debian trixie-updates main
+          deb https://security.debian.org/debian-security trixie-security main
+          EOF
 
-[Debian-Updates]
-source=http://deb.debian.org/debian
-suite=trixie-updates
-components=main contrib non-free non-free-firmware
-keyring=debian-archive-keyring
+          sudo chroot "$ROOTFS" /usr/bin/qemu-aarch64-static /bin/bash -euxo pipefail <<'EOF'
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            bash coreutils util-linux procps iproute2 iputils-ping \
+            nano vim-tiny curl wget ca-certificates git \
+            python3 python3-pip python3-venv \
+            openssh-client openssh-server sudo locales tzdata \
+            dbus dbus-x11 polkitd pkexec \
+            xfce4 xfce4-terminal thunar xfce4-panel xfdesktop4 xfwm4 xfce4-settings \
+            xfce4-whiskermenu-plugin \
+            xvfb xauth x11-xserver-utils x11vnc novnc websockify \
+            firefox-esr
+          getent group audio >/dev/null || groupadd audio
+          getent group video >/dev/null || groupadd video
+          useradd -m -s /bin/bash -G sudo,audio,video cyber
+          echo 'cyber ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/cyber
+          chmod 0440 /etc/sudoers.d/cyber
+          sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+          locale-gen
+          printf 'LANG=en_US.UTF-8\n' >/etc/default/locale
+          ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+          printf 'UTC\n' >/etc/timezone
+          printf '127.0.0.1 localhost cyberdeck\n' >/etc/hosts
+          printf 'cyberdeck\n' >/etc/hostname
+          printf 'PasswordAuthentication no\nPermitRootLogin no\nListenAddress 127.0.0.1\n' >/etc/ssh/sshd_config.d/cyberdeck.conf
+          apt-get clean
+          rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
+          rm -f /usr/sbin/policy-rc.d
+          EOF
 
-[Debian-Security]
-source=http://security.debian.org/debian-security
-suite=trixie-security
-components=main contrib non-free non-free-firmware
-keyring=debian-archive-keyring
-EOF
+          sudo mkdir -p "$ROOTFS/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml"
+          sudo mkdir -p "$ROOTFS/home/cyber/.config/xfce4/terminal"
+          sudo cp app/src/main/assets/xfce-config/xfce4-panel/xfce4-panel.xml "$ROOTFS/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml/"
+          sudo cp app/src/main/assets/xfce-config/xfwm4/xfwm4.xml "$ROOTFS/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml/"
+          sudo cp app/src/main/assets/xfce-config/xsettings/xsettings.xml "$ROOTFS/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml/"
+          sudo cp app/src/main/assets/xfce-config/xfce4-terminal/terminalrc "$ROOTFS/home/cyber/.config/xfce4/terminal/"
+          sudo chroot "$ROOTFS" /usr/bin/qemu-aarch64-static chown -R cyber:cyber /home/cyber
+          sudo rm -f "$ROOTFS/usr/bin/qemu-aarch64-static"
 
-      - name: Run multistrap (downloads & unpacks .debs directly - no qemu)
+          test -x "$ROOTFS/bin/bash"
+          test -x "$ROOTFS/usr/bin/startxfce4"
+          test -x "$ROOTFS/usr/bin/firefox-esr"
+          test -x "$ROOTFS/usr/bin/python3"
+
+      - name: Package rootfs
         run: |
-          sudo multistrap -f ${{ runner.temp }}/multistrap.conf -d ${{ runner.temp }}/rootfs-build/rootfs-arm64
+          set -euxo pipefail
+          mkdir -p "${RUNNER_TEMP}/artifacts"
+          sudo tar --numeric-owner --xattrs --acls -I 'gzip -1' \
+            -cf "${RUNNER_TEMP}/artifacts/rootfs-arm64.tar.gz" \
+            -C "${RUNNER_TEMP}" rootfs-arm64
+          sudo chown "$(id -u):$(id -g)" "${RUNNER_TEMP}/artifacts/rootfs-arm64.tar.gz"
+          gzip -t "${RUNNER_TEMP}/artifacts/rootfs-arm64.tar.gz"
+          ls -lh "${RUNNER_TEMP}/artifacts/rootfs-arm64.tar.gz"
 
-      - name: Configure rootfs (single chroot with qemu only for post-install)
-        run: |
-          ROOTFS_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
-          
-          # Install qemu only for this chroot
-          sudo apt-get update && sudo apt-get install -y qemu-user-static binfmt-support
-          sudo systemctl restart systemd-binfmt
-          sudo update-binfmts --enable qemu-aarch64
-          sleep 2
-          sudo cp /usr/bin/qemu-aarch64-static "$ROOTFS_DIR/usr/bin/"
-
-          printf 'deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware\ndeb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware\ndeb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware\n' | sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null
-
-          sudo chroot "$ROOTFS_DIR" /bin/bash -c "
-            set -euo pipefail
-            apt-get update
-            # Create cyber user
-            useradd -m -s /bin/bash -G sudo,video,audio,render,plugdev cyber
-            echo 'cyber:cyber' | chpasswd
-            echo 'root:root' | chpasswd
-            echo 'cyber ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/cyber
-            # Locale
-            sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
-            locale-gen
-            echo 'LANG=\"en_US.UTF-8\"' > /etc/default/locale
-            ln -sf /usr/share/zoneinfo/UTC /etc/localtime
-            echo 'UTC' > /etc/timezone
-            # Disable services
-            systemctl disable bluetooth cups ModemManager avahi-daemon 2>/dev/null || true
-            # Clean
-            apt-get clean
-            rm -rf /var/lib/apt/lists/*
-            rm -rf /usr/share/doc/*
-            rm -rf /usr/share/man/*
-            rm -rf /usr/share/locale/*
-            find / -name '*.pyc' -delete 2>/dev/null
-            find / -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
-          "
-
-      - name: Copy XFCE and LightDM configurations
-        run: |
-          ROOTFS_DIR="${{ runner.temp }}/rootfs-build/rootfs-arm64"
-          sudo mkdir -p "$ROOTFS_DIR/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml"
-          sudo cp -r app/src/main/assets/xfce-config/* "$ROOTFS_DIR/home/cyber/.config/xfce4/"
-          sudo mkdir -p "$ROOTFS_DIR/etc/lightdm"
-          sudo cp -r app/src/main/assets/lightdm/* "$ROOTFS_DIR/etc/lightdm/"
-          sudo chmod +x "$ROOTFS_DIR/etc/lightdm/*.sh"
-          sudo chroot "$ROOTFS_DIR" chown -R cyber:cyber /home/cyber
-
-      - name: Create rootfs tarball
-        run: |
-          mkdir -p ${{ runner.temp }}/artifacts
-          cd ${{ runner.temp }}/rootfs-build
-          tar -czf ${{ runner.temp }}/artifacts/rootfs-arm64.tar.gz rootfs-arm64
-          ls -lh ${{ runner.temp }}/artifacts/rootfs-arm64.tar.gz
-
-      - name: Upload rootfs artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: rootfs-arm64
           path: ${{ runner.temp }}/artifacts/rootfs-arm64.tar.gz
+          compression-level: 0
           retention-days: 7
 
-      - name: Set outputs
-        id: set-outputs
-        run: |
-          SIZE=$(stat -c%s ${{ runner.temp }}/artifacts/rootfs-arm64.tar.gz)
-          echo "rootfs_path=${{ runner.temp }}/artifacts/rootfs-arm64.tar.gz" >> $GITHUB_OUTPUT
-          echo "rootfs_size=$SIZE" >> $GITHUB_OUTPUT
-
-  build-proot:
-    name: Get PRoot for ARM64 Android (official static release)
+  proot:
+    name: Portable Android PRoot
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    outputs:
-      proot_path: ${{ steps.set-outputs.outputs.proot_path }}
     steps:
-      - name: Download official proot static binary (multiple patterns)
+      - name: Download and validate PRoot
         run: |
-          mkdir -p ${{ runner.temp }}/proot-install/bin
-          
-          # proot-me/proot releases - static aarch64 binaries
-          URLs=(
-            # v5.4.0 - current
-            "https://github.com/proot-me/proot/releases/download/v5.4.0/proot-v5.4.0-aarch64-static.tar.gz"
-            "https://github.com/proot-me/proot/releases/download/v5.4.0/proot-v5.4.0-aarch64.tar.gz"
-            "https://github.com/proot-me/proot/releases/download/v5.4.0/proot-static-aarch64.tar.gz"
-            
-            # v5.3.6 - previous
-            "https://github.com/proot-me/proot/releases/download/v5.3.6/proot-v5.3.6-aarch64-static.tar.gz"
-            "https://github.com/proot-me/proot/releases/download/v5.3.6/proot-v5.3.6-aarch64.tar.gz"
-            
-            # generic
-            "https://github.com/proot-me/proot/releases/latest/download/proot-aarch64-static.tar.gz"
-          )
-          
-          SUCCESS=0
-          for URL in "${URLs[@]}"; do
-            echo "Trying: $URL"
-            if wget -q --timeout=30 --tries=2 "$URL" -O ${{ runner.temp }}/proot.tar.gz 2>&1; then
-              echo "Downloaded from: $URL"
-              tar -xzf ${{ runner.temp }}/proot.tar.gz -C ${{ runner.temp }}/proot-install/bin/ 2>&1 || true
-              
-              # Find the binary (might be in subdir)
-              PROOT_BIN=$(find ${{ runner.temp }}/proot-install/bin -name "proot" -type f 2>/dev/null | head -1)
-              
-              if [ -n "$PROOT_BIN" ] && [ -f "$PROOT_BIN" ]; then
-                echo "Found proot at: $PROOT_BIN"
-                cp "$PROOT_BIN" ${{ runner.temp }}/proot-install/bin/proot
-                chmod +x ${{ runner.temp }}/proot-install/bin/proot
-                SUCCESS=1
-                echo "DOWNLOAD_URL=$URL" >> $GITHUB_ENV
-                break
-              fi
-              echo "No proot binary found in archive"
-            else
-              echo "Failed: $URL"
-            fi
-          done
-          
-          if [ $SUCCESS -eq 0 ]; then
-            echo "::error::ALL proot URLs FAILED"
+          set -euxo pipefail
+          mkdir -p "${RUNNER_TEMP}/proot"
+          curl --fail --location --retry 5 \
+            https://skirsten.github.io/proot-portable-android-binaries/aarch64/proot \
+            -o "${RUNNER_TEMP}/proot/libproot.so"
+          chmod 0755 "${RUNNER_TEMP}/proot/libproot.so"
+          file "${RUNNER_TEMP}/proot/libproot.so" | tee /tmp/proot-file.txt
+          grep -q 'ARM aarch64' /tmp/proot-file.txt
+          if readelf -d "${RUNNER_TEMP}/proot/libproot.so" 2>/dev/null | grep -q NEEDED; then
+            echo 'PRoot is dynamically linked; refusing a non-portable runtime.' >&2
             exit 1
           fi
+          sha256sum "${RUNNER_TEMP}/proot/libproot.so"
 
-      - name: Verify PRoot binary
-        run: |
-          echo "=== PRoot Binary Info ==="
-          file ${{ runner.temp }}/proot-install/bin/proot
-          echo ""
-          echo "=== PRoot Version ==="
-          ${{ runner.temp }}/proot-install/bin/proot --version
-          echo ""
-          echo "=== Downloaded from ==="
-          echo "${{ env.DOWNLOAD_URL }}"
-
-      - name: Upload PRoot artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: proot-android-arm64
-          path: ${{ runner.temp }}/proot-install/bin/proot
+          name: proot-arm64
+          path: ${{ runner.temp }}/proot/libproot.so
+          compression-level: 0
           retention-days: 7
 
-      - name: Set outputs
-        id: set-outputs
-        run: |
-          echo "proot_path=${{ runner.temp }}/proot-install/bin/proot" >> $GITHUB_OUTPUT
-
-  build-native:
-    name: Build Native Libraries (JNI + Supervisor)
+  apk:
+    name: Assemble installable APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    needs: [build-proot]
+    timeout-minutes: 120
+    needs: [rootfs, proot]
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Download PRoot binary
-        uses: actions/download-artifact@v4
-        with:
-          name: proot-android-arm64
-          path: ${{ runner.temp }}/proot-bin
-
-      - name: Setup Android NDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-26'
-
-      - name: Prepare PRoot for CMake
-        run: |
-          mkdir -p app/src/main/cpp/proot
-          cp ${{ runner.temp }}/proot-bin/proot app/src/main/cpp/proot/
-          printf '%s\n' \
-            'cmake_minimum_required(VERSION 3.22.1)' \
-            'project(proot-prebuilt)' \
-            '' \
-            'add_library(proot STATIC IMPORTED)' \
-            'set_target_properties(proot PROPERTIES' \
-            '  IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/proot' \
-            '  IMPORTED_LINK_INTERFACE_LIBRARIES ""' \
-            ')' > app/src/main/cpp/proot/CMakeLists.txt
-
-      - name: Configure CMake for Android
-        run: |
-          cd app
-          cmake -B build/arm64 -S src/main/cpp \
-            -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-26 \
-            -DANDROID_NDK=${ANDROID_NDK_HOME} \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_ANDROID_NDK_TOOLCHAIN_VERSION=clang
-
-      - name: Build native libraries
-        run: |
-          cd app
-          cmake --build build/arm64 -j$(nproc) --config Release
-
-      - name: Verify native libraries
-        run: |
-          ls -la app/build/arm64/jniLibs/arm64-v8a/
-          file app/build/arm64/jniLibs/arm64-v8a/liblinuxcyberdeck_jni.so
-
-      - name: Upload native libraries artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-libs-arm64
-          path: app/build/arm64/jniLibs/arm64-v8a/*.so
-          retention-days: 7
-
-  assemble-apk:
-    name: Assemble Final APK
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    needs: [build-rootfs, build-proot, build-native]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download rootfs
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: rootfs-arm64
           path: app/src/main/assets
 
-      - name: Download PRoot binary
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: proot-android-arm64
-          path: app/src/main/assets
-
-      - name: Download native libraries
-        uses: actions/download-artifact@v4
-        with:
-          name: native-libs-arm64
+          name: proot-arm64
           path: app/src/main/jniLibs/arm64-v8a
 
-      - name: Verify assets
+      - name: Validate packaged inputs
         run: |
-          ls -lh app/src/main/assets/
-          ls -la app/src/main/jniLibs/arm64-v8a/
+          set -euxo pipefail
+          test -s app/src/main/assets/rootfs-arm64.tar.gz
+          gzip -t app/src/main/assets/rootfs-arm64.tar.gz
+          chmod 0755 app/src/main/jniLibs/arm64-v8a/libproot.so
+          test -x app/src/main/jniLibs/arm64-v8a/libproot.so
+          file app/src/main/jniLibs/arm64-v8a/libproot.so | grep -q 'ARM aarch64'
+          ls -lh app/src/main/assets/rootfs-arm64.tar.gz app/src/main/jniLibs/arm64-v8a/libproot.so
 
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'ndk;27.0.12077973 cmake;3.22.1 build-tools;34.0.0 platform-tools platforms;android-34'
+      - uses: android-actions/setup-android@v3
 
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
+      - name: Install Android packages
+        run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0' 'cmake;3.22.1' 'ndk;27.0.12077973'
 
-      - name: Build APK
+      - name: Build signed debug APK
         run: |
-          ./gradlew :app:assembleRelease --no-daemon -Dorg.gradle.jvmargs="-Xmx4g"
+          set -euxo pipefail
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --max-workers=2
+          cp app/build/outputs/apk/debug/app-debug.apk linux-cyberdeck.apk
 
-      - name: Verify APK
+      - name: Verify APK contents and signature
         run: |
-          ls -lh app/build/outputs/apk/release/
-          unzip -l app/build/outputs/apk/release/app-release.apk | head -30
+          set -euxo pipefail
+          apksigner verify --verbose linux-cyberdeck.apk
+          unzip -l linux-cyberdeck.apk | grep -q 'assets/rootfs-arm64.tar.gz'
+          unzip -l linux-cyberdeck.apk | grep -q 'lib/arm64-v8a/libproot.so'
+          unzip -l linux-cyberdeck.apk | grep -q 'lib/arm64-v8a/liblinuxcyberdeck_jni.so'
+          sha256sum linux-cyberdeck.apk | tee linux-cyberdeck.apk.sha256
+          ls -lh linux-cyberdeck.apk
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: linux-cyberdeck-apk
-          path: app/build/outputs/apk/release/app-release.apk
+          path: |
+            linux-cyberdeck.apk
+            linux-cyberdeck.apk.sha256
+          compression-level: 0
           retention-days: 30
-
-      - name: Create release (on tag)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: app/build/outputs/apk/release/app-release.apk
-          generate_release_notes: true
-          draft: false
-          prerelease: false

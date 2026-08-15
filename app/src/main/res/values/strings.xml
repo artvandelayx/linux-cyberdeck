@@ -5,7 +5,7 @@
     <string name="status_running">Linux running</string>
     <string name="status_installing">Installing Linux…</string>
     <string name="status_installed">Linux installed</string>
-    <string name="status_error">Error</string>
+    <string name="diagnostic_status_error">Error</string>
 
     <string name="btn_start_linux">START LINUX</string>
     <string name="btn_open_desktop">OPEN DESKTOP</string>

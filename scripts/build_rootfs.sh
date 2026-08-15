@@ -87,7 +87,7 @@ EOF
     log_info "Installing X11 server..."
     chroot "$ROOTFS_DIR" apt-get install -y \
         xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-video-fbdev \
-        xvfb xwayland xauth x11-xserver-utils
+        xvfb xauth x11-xserver-utils x11vnc novnc websockify
 
     # Create cyber user
     log_info "Creating cyber user..."

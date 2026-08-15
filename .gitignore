@@ -9,6 +9,8 @@ build/
 local.properties
 gradle.properties
 keystore.properties
+.tools/
+hs_err_pid*.log
 
 # IDE
 .idea/

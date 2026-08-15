@@ -89,18 +89,20 @@ static jobject create_diagnostics_object(JNIEnv* env, const lc_diagnostics_t* di
 
 JNIEXPORT jint JNICALL
 Java_com_linuxcyberdeck_native_LinuxNativeBridge_initializeSession(
-    JNIEnv* env, jclass clazz, jstring appFilesDir, jstring packageName) {
+    JNIEnv* env, jclass clazz, jstring appFilesDir, jstring packageName, jstring prootPath) {
     
     const char* files_dir = jstring_to_cstr(env, appFilesDir);
     const char* pkg_name = jstring_to_cstr(env, packageName);
+    const char* proot_path = jstring_to_cstr(env, prootPath);
     
     int result = LC_RESULT_ERROR;
     if (files_dir) {
-        result = lc_initialize_session(files_dir, pkg_name ? pkg_name : "com.linuxcyberdeck");
+        result = lc_initialize_session(files_dir, pkg_name ? pkg_name : "com.linuxcyberdeck", proot_path);
     }
     
     release_jstring(env, appFilesDir, files_dir);
     release_jstring(env, packageName, pkg_name);
+    release_jstring(env, prootPath, proot_path);
     
     return (jint)result;
 }
@@ -161,18 +163,18 @@ JNIEXPORT jint JNICALL
 Java_com_linuxcyberdeck_native_LinuxNativeBridge_mountSharedStorage(
     JNIEnv* env, jclass clazz, jstring androidPath, jstring linuxMountPoint, jobject storageManager) {
 
-    const char* android = jstring_to_cstr(env, androidPath);
-    const char* linux = jstring_to_cstr(env, linuxMountPoint);
+    const char* android_uri = jstring_to_cstr(env, androidPath);
+    const char* linux_mount = jstring_to_cstr(env, linuxMountPoint);
     int result = LC_RESULT_ERROR;
 
-    if (android && linux && storageManager) {
+    if (android_uri && linux_mount && storageManager) {
         JavaVM* jvm;
         (*env)->GetJavaVM(env, &jvm);
-        result = lc_mount_shared_storage(android, linux, jvm, storageManager);
+        result = lc_mount_shared_storage(android_uri, linux_mount, jvm, storageManager);
     }
 
-    release_jstring(env, androidPath, android);
-    release_jstring(env, linuxMountPoint, linux);
+    release_jstring(env, androidPath, android_uri);
+    release_jstring(env, linuxMountPoint, linux_mount);
     return (jint)result;
 }
 
@@ -180,16 +182,16 @@ JNIEXPORT jint JNICALL
 Java_com_linuxcyberdeck_native_LinuxNativeBridge_unmountSharedStorage(
     JNIEnv* env, jclass clazz, jstring linuxMountPoint, jobject storageManager) {
 
-    const char* linux = jstring_to_cstr(env, linuxMountPoint);
+    const char* linux_mount = jstring_to_cstr(env, linuxMountPoint);
     int result = LC_RESULT_ERROR;
 
-    if (linux && storageManager) {
+    if (linux_mount && storageManager) {
         JavaVM* jvm;
         (*env)->GetJavaVM(env, &jvm);
-        result = lc_unmount_shared_storage(linux, jvm, storageManager);
+        result = lc_unmount_shared_storage(linux_mount, jvm, storageManager);
     }
 
-    release_jstring(env, linuxMountPoint, linux);
+    release_jstring(env, linuxMountPoint, linux_mount);
     return (jint)result;
 }
 

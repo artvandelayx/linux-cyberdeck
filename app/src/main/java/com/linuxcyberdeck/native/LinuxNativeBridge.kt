@@ -1,5 +1,7 @@
 package com.linuxcyberdeck.native
 
+import com.linuxcyberdeck.storage.StorageBridgeManager
+
 class LinuxNativeBridge {
     companion object {
         // Load the native library
@@ -9,7 +11,7 @@ class LinuxNativeBridge {
 
         // Session management
         @JvmStatic
-        external fun initializeSession(appFilesDir: String, packageName: String): Int
+        external fun initializeSession(appFilesDir: String, packageName: String, prootPath: String): Int
 
         @JvmStatic
         external fun startLinuxSession(): Int
@@ -58,6 +60,29 @@ class LinuxNativeBridge {
 
         @JvmStatic
         external fun getTouchMode(): Boolean
+
+        const val SESSION_STATE_NOT_INSTALLED = 0
+        const val SESSION_STATE_INSTALLING = 1
+        const val SESSION_STATE_INSTALLED = 2
+        const val SESSION_STATE_STARTING = 3
+        const val SESSION_STATE_RUNNING = 4
+        const val SESSION_STATE_STOPPING = 5
+        const val SESSION_STATE_ERROR = 6
+
+        const val LOG_TYPE_X11 = 0
+        const val LOG_TYPE_LINUX = 1
+        const val LOG_TYPE_XFCE = 2
+        const val LOG_TYPE_FIREFOX = 3
+        const val LOG_TYPE_STORAGE = 4
+        const val LOG_TYPE_APP = 5
+
+        const val RESULT_SUCCESS = 0
+        const val RESULT_ERROR = -1
+        const val RESULT_ALREADY_RUNNING = -2
+        const val RESULT_NOT_INSTALLED = -3
+        const val RESULT_INSTALL_IN_PROGRESS = -4
+        const val RESULT_INSUFFICIENT_STORAGE = -5
+        const val RESULT_PERMISSION_DENIED = -6
     }
 
     data class SessionStatusNative(
@@ -89,28 +114,4 @@ class LinuxNativeBridge {
         val networkStatus: String
     )
 
-    companion object Constants {
-        const val SESSION_STATE_NOT_INSTALLED = 0
-        const val SESSION_STATE_INSTALLING = 1
-        const val SESSION_STATE_INSTALLED = 2
-        const val SESSION_STATE_STARTING = 3
-        const val SESSION_STATE_RUNNING = 4
-        const val SESSION_STATE_STOPPING = 5
-        const val SESSION_STATE_ERROR = 6
-
-        const val LOG_TYPE_X11 = 0
-        const val LOG_TYPE_LINUX = 1
-        const val LOG_TYPE_XFCE = 2
-        const val LOG_TYPE_FIREFOX = 3
-        const val LOG_TYPE_STORAGE = 4
-        const val LOG_TYPE_APP = 5
-
-        const val RESULT_SUCCESS = 0
-        const val RESULT_ERROR = -1
-        const val RESULT_ALREADY_RUNNING = -2
-        const val RESULT_NOT_INSTALLED = -3
-        const val RESULT_INSTALL_IN_PROGRESS = -4
-        const val RESULT_INSUFFICIENT_STORAGE = -5
-        const val RESULT_PERMISSION_DENIED = -6
-    }
 }

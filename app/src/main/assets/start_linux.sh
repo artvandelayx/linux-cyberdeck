@@ -36,7 +36,8 @@ log "Screen: $XVFB_SCREEN"
 
 # Generate Xauthority cookie
 log "Generating Xauthority..."
-xauth -f "$XAUTH_FILE" generate ":$DISPLAY_NUM" . trusted 2>>"$LOG_DIR/xauth.log"
+COOKIE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+xauth -f "$XAUTH_FILE" add ":$DISPLAY_NUM" . "$COOKIE" 2>>"$LOG_DIR/xauth.log"
 export XAUTHORITY="$XAUTH_FILE"
 
 # Start Xvfb
@@ -56,23 +57,11 @@ if ! xset -display ":$DISPLAY_NUM" q >/dev/null 2>&1; then
 fi
 log "Xvfb ready"
 
-# Start Xwayland
-log "Starting Xwayland..."
-Xwayland ":$DISPLAY_NUM" -rootless -auth "$XAUTH_FILE" -nolisten tcp \
-    >>"$LOG_DIR/xwayland.log" 2>&1 &
-XWAYLAND_PID=$!
-log "Xwayland PID: $XWAYLAND_PID"
-
-# Wait for Xwayland
-sleep 2
-
-# Test X connection
-if ! xset -display ":$DISPLAY_NUM" q >/dev/null 2>&1; then
-    log "ERROR: Xwayland failed to start"
-    kill $XVFB_PID 2>/dev/null
-    exit 1
-fi
-log "Xwayland ready"
+log "Starting loopback display bridge..."
+x11vnc -display ":$DISPLAY_NUM" -localhost -forever -shared -nopw -rfbport 5901 \
+    >>"$LOG_DIR/x11vnc.log" 2>&1 &
+websockify --web /usr/share/novnc 127.0.0.1:6080 127.0.0.1:5901 \
+    >>"$LOG_DIR/novnc.log" 2>&1 &
 
 # Start D-Bus
 log "Starting D-Bus..."
@@ -102,6 +91,9 @@ export QT_QPA_PLATFORM="xcb"
 mkdir -p "$XDG_RUNTIME_DIR"
 chown cyber:cyber "$XDG_RUNTIME_DIR"
 
-# Start LightDM (which will auto-login cyber and start XFCE)
-log "Starting LightDM..."
-exec lightdm --test-mode=0 >>"$LOG_DIR/lightdm.log" 2>&1
+# Start the desktop directly as the unprivileged account. Display managers rely
+# on kernel/PAM facilities that are intentionally unavailable inside PRoot.
+log "Starting XFCE as cyber..."
+exec su -s /bin/bash cyber -c \
+    'export DISPLAY=:1 XAUTHORITY=/tmp/.X1-auth HOME=/home/cyber USER=cyber LOGNAME=cyber XDG_RUNTIME_DIR=/run/user/1000; exec dbus-launch --exit-with-session startxfce4' \
+    >>"$LOG_DIR/xfce.log" 2>&1

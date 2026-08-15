@@ -4,7 +4,7 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.linuxcyberdeck.LinuxCyberdeckApplication
 import com.linuxcyberdeck.installer.LinuxInstaller
@@ -14,8 +14,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import android.content.Intent
+import androidx.core.content.ContextCompat
+import com.linuxcyberdeck.service.LinuxSessionService
 
-class LinuxSessionManager(application: Application) : ViewModel() {
+class LinuxSessionManager(private val application: Application) : AndroidViewModel(application) {
 
     private val _sessionStatus = MutableLiveData<LinuxSessionStatus>()
     val sessionStatus: LiveData<LinuxSessionStatus> = _sessionStatus
@@ -45,6 +48,12 @@ class LinuxSessionManager(application: Application) : ViewModel() {
                     debianPid = 0,
                     uptimeMillis = 0
                 ))
+                _isLoading.postValue(installStatus.state == LinuxSessionState.INSTALLING)
+                if (installStatus.state == LinuxSessionState.INSTALLED) {
+                    val prootPath = "${application.applicationInfo.nativeLibraryDir}/libproot.so"
+                    LinuxNativeBridge.initializeSession(application.filesDir.absolutePath, application.packageName, prootPath)
+                    refreshStatus()
+                }
             }
         }
     }
@@ -76,6 +85,7 @@ class LinuxSessionManager(application: Application) : ViewModel() {
                 when (result) {
                     LinuxNativeBridge.RESULT_SUCCESS -> {
                         Timber.i("Linux session started successfully")
+                        ContextCompat.startForegroundService(application, Intent(application, LinuxSessionService::class.java))
                         refreshStatus()
                     }
                     LinuxNativeBridge.RESULT_ALREADY_RUNNING -> {
@@ -119,6 +129,7 @@ class LinuxSessionManager(application: Application) : ViewModel() {
                 when (result) {
                     LinuxNativeBridge.RESULT_SUCCESS -> {
                         Timber.i("Linux session stopped successfully")
+                        application.stopService(Intent(application, LinuxSessionService::class.java))
                         refreshStatus()
                     }
                     else -> {
@@ -173,7 +184,7 @@ class LinuxSessionManager(application: Application) : ViewModel() {
         }
     }
 
-    fun installRootfs(downloadUrl: String, expectedSize: Long) {
+    fun installRootfs() {
         _isLoading.value = true
         installer.installRootfs()
     }
@@ -183,7 +194,7 @@ class LinuxSessionManager(application: Application) : ViewModel() {
         _isLoading.value = false
     }
 
-    fun getDiagnostics() = withContext(Dispatchers.IO) {
+    suspend fun getDiagnostics() = withContext(Dispatchers.IO) {
         try {
             LinuxNativeBridge.getDiagnostics()
         } catch (e: Exception) {
@@ -192,7 +203,7 @@ class LinuxSessionManager(application: Application) : ViewModel() {
         }
     }
 
-    fun getLogs(logType: Int, maxLines: Int) = withContext(Dispatchers.IO) {
+    suspend fun getLogs(logType: Int, maxLines: Int) = withContext(Dispatchers.IO) {
         try {
             LinuxNativeBridge.getLogs(logType, maxLines)
         } catch (e: Exception) {
@@ -201,19 +212,19 @@ class LinuxSessionManager(application: Application) : ViewModel() {
         }
     }
 
-    fun setAutoStart(enabled: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun setAutoStart(enabled: Boolean) = withContext(Dispatchers.IO) {
         LinuxNativeBridge.setAutoStart(enabled)
     }
 
-    fun getAutoStart() = withContext(Dispatchers.IO) {
+    suspend fun getAutoStart() = withContext(Dispatchers.IO) {
         LinuxNativeBridge.getAutoStart()
     }
 
-    fun setTouchMode(enabled: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun setTouchMode(enabled: Boolean) = withContext(Dispatchers.IO) {
         LinuxNativeBridge.setTouchMode(enabled)
     }
 
-    fun getTouchMode() = withContext(Dispatchers.IO) {
+    suspend fun getTouchMode() = withContext(Dispatchers.IO) {
         LinuxNativeBridge.getTouchMode()
     }
 

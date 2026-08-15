@@ -2,6 +2,7 @@ package com.linuxcyberdeck.installer
 
 import android.content.Context
 import android.content.res.AssetManager
+import android.system.Os
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
@@ -10,6 +11,8 @@ import com.linuxcyberdeck.LinuxCyberdeckApplication
 import com.linuxcyberdeck.session.LinuxSessionState
 import com.linuxcyberdeck.session.LinuxSessionStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -17,6 +20,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.zip.GZIPInputStream
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import timber.log.Timber
 
 class LinuxInstaller(private val context: Context) : ViewModel() {
@@ -35,11 +39,11 @@ class LinuxInstaller(private val context: Context) : ViewModel() {
 
     // Asset file names
     private val ROOTFS_TARBALL = "rootfs-arm64.tar.gz"
-    private val PROOT_BINARY = "proot"
     private val START_SCRIPT = "start_linux.sh"
+    private var installJob: Job? = null
 
     fun installRootfs() {
-        viewModelScope.launch(Dispatchers.IO) {
+        installJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 _installStatus.postValue(InstallStatus(
                     state = LinuxSessionState.INSTALLING,
@@ -50,7 +54,15 @@ class LinuxInstaller(private val context: Context) : ViewModel() {
                 val filesDir = context.filesDir
                 val linuxDir = File(filesDir, "linux")
                 val rootfsDir = File(linuxDir, "rootfs")
+                val stagingDir = File(linuxDir, "rootfs.installing")
                 val assets = context.assets
+                val requiredFreeBytes = 6L * 1024 * 1024 * 1024
+                if (filesDir.usableSpace < requiredFreeBytes) {
+                    throw IOException(
+                        "Insufficient storage: ${formatBytes(filesDir.usableSpace)} free; " +
+                            "${formatBytes(requiredFreeBytes)} required"
+                    )
+                }
 
                 // Check if rootfs already exists and is valid
                 if (rootfsDir.exists() && isRootfsValid(rootfsDir)) {
@@ -62,14 +74,6 @@ class LinuxInstaller(private val context: Context) : ViewModel() {
                     ))
                     return@launch
                 }
-
-                // Extract PRoot binary first
-                _installStatus.postValue(InstallStatus(
-                    state = LinuxSessionState.INSTALLING,
-                    progress = 0.05f,
-                    currentOperation = "Extracting PRoot..."
-                ))
-                extractAsset(PROOT_BINARY, File(filesDir, PROOT_BINARY), true)
 
                 // Extract start script
                 _installStatus.postValue(InstallStatus(
@@ -105,7 +109,8 @@ class LinuxInstaller(private val context: Context) : ViewModel() {
                     progress = 0.85f,
                     currentOperation = "Extracting rootfs archive..."
                 ))
-                extractTarGz(tarballFile, rootfsDir) { filesExtracted, totalFiles ->
+                stagingDir.deleteRecursively()
+                extractTarGz(tarballFile, stagingDir) { filesExtracted, totalFiles ->
                     _installStatus.postValue(InstallStatus(
                         state = LinuxSessionState.INSTALLING,
                         progress = 0.85f + (0.1f * filesExtracted / totalFiles.toFloat()),
@@ -123,8 +128,12 @@ class LinuxInstaller(private val context: Context) : ViewModel() {
                     currentOperation = "Verifying installation..."
                 ))
 
-                if (!isRootfsValid(rootfsDir)) {
+                if (!isRootfsValid(stagingDir)) {
                     throw IOException("Rootfs verification failed")
+                }
+                rootfsDir.deleteRecursively()
+                if (!stagingDir.renameTo(rootfsDir)) {
+                    throw IOException("Could not activate the installed rootfs")
                 }
 
                 _installStatus.postValue(InstallStatus(
@@ -135,6 +144,8 @@ class LinuxInstaller(private val context: Context) : ViewModel() {
 
                 Timber.i("Rootfs installation complete")
 
+            } catch (_: CancellationException) {
+                _installStatus.postValue(InstallStatus())
             } catch (e: Exception) {
                 Timber.e(e, "Installation failed")
                 _installStatus.postValue(InstallStatus(
@@ -148,8 +159,7 @@ class LinuxInstaller(private val context: Context) : ViewModel() {
     }
 
     fun cancelInstallation() {
-        // Note: Cancellation would require more complex implementation
-        // For now, just reset status
+        installJob?.cancel()
         _installStatus.postValue(InstallStatus())
     }
 
@@ -198,86 +208,47 @@ class LinuxInstaller(private val context: Context) : ViewModel() {
         targetDir: File,
         progressCallback: (Int, Int) -> Unit
     ) {
-        targetDir.mkdirs()
-
-        GZIPInputStream(tarballFile.inputStream()).use { gzis ->
-            // Simple tar extraction (GNU tar format)
-            val buffer = ByteArray(512)
-            var filesExtracted = 0
-            var totalFiles = estimateTarEntries(gzis)
-            
-            // Reset stream for actual extraction
-            gzis.close()
-            GZIPInputStream(tarballFile.inputStream()).use { gzis2 ->
+        val targetRoot = targetDir.canonicalFile.apply { mkdirs() }
+        var extracted = 0
+        GZIPInputStream(tarballFile.inputStream().buffered()).use { gzip ->
+            TarArchiveInputStream(gzip).use { tar ->
                 while (true) {
-                    val header = ByteArray(512)
-                    val read = gzis2.read(header)
-                    if (read != 512) break
-                    
-                    val name = String(header, 0, 100).trim { it <= ' ' }
-                    if (name.isEmpty()) break
-                    
-                    val sizeStr = String(header, 124, 12).trim()
-                    val size = sizeStr.toLongOrNull() ?: 0L
-                    val typeFlag = header[156].toChar()
-                    
-                    val targetFile = File(targetDir, name)
-                    
-                    when (typeFlag) {
-                        '0', '\0' -> { // Regular file
-                            targetFile.parentFile.mkdirs()
-                            FileOutputStream(targetFile).use { out ->
-                                var remaining = size
-                                val buf = ByteArray(8192)
-                                while (remaining > 0) {
-                                    val toRead = minOf(buf.size, remaining.toInt())
-                                    val read = gzis2.read(buf, 0, toRead)
-                                    if (read <= 0) break
-                                    out.write(buf, 0, read)
-                                    remaining -= read
-                                }
-                            }
-                            filesExtracted++
-                            if (totalFiles > 0) progressCallback(filesExtracted, totalFiles)
+                    val entry = tar.nextTarEntry ?: break
+                    val relativeName = entry.name.removePrefix("rootfs-arm64/").removePrefix("./")
+                    if (relativeName.isEmpty()) continue
+                    val target = File(targetRoot, relativeName).canonicalFile
+                    if (!target.path.startsWith(targetRoot.path + File.separator)) {
+                        throw IOException("Unsafe path in rootfs archive: ${entry.name}")
+                    }
+                    when {
+                        entry.isDirectory -> target.mkdirs()
+                        entry.isSymbolicLink -> {
+                            target.parentFile?.mkdirs()
+                            if (target.exists()) target.delete()
+                            Os.symlink(entry.linkName, target.path)
                         }
-                        '5' -> { // Directory
-                            targetFile.mkdirs()
-                        }
-                        '2' -> { // Symlink
-                            val linkName = String(header, 157, 100).trim { it <= ' ' }
-                            targetFile.parentFile.mkdirs()
-                            try {
-                                // Note: symlink creation may need special handling on Android
-                            } catch (e: Exception) {
-                                Timber.w(e, "Failed to create symlink: $name -> $linkName")
+                        entry.isLink -> {
+                            val linkName = entry.linkName.removePrefix("rootfs-arm64/").removePrefix("./")
+                            val source = File(targetRoot, linkName).canonicalFile
+                            if (!source.path.startsWith(targetRoot.path + File.separator)) {
+                                throw IOException("Unsafe hard link in rootfs archive: ${entry.name}")
                             }
+                            target.parentFile?.mkdirs()
+                            Os.link(source.path, target.path)
                         }
-                        else -> {
-                            // Skip unknown types, but consume data
-                            var remaining = size
-                            val skipBuf = ByteArray(8192)
-                            while (remaining > 0) {
-                                val toRead = minOf(skipBuf.size, remaining.toInt())
-                                val read = gzis2.read(skipBuf, 0, toRead)
-                                if (read <= 0) break
-                                remaining -= read
-                            }
+                        entry.isFile -> {
+                            target.parentFile?.mkdirs()
+                            FileOutputStream(target).use { output -> tar.copyTo(output, 64 * 1024) }
                         }
                     }
-                    
-                    // Pad to 512-byte boundary
-                    val padding = (512 - (size % 512)) % 512
-                    if (padding > 0) {
-                        gzis2.skip(padding.toLong())
+                    if (!entry.isSymbolicLink && (entry.isFile || entry.isDirectory)) {
+                        Os.chmod(target.path, entry.mode)
                     }
+                    extracted++
+                    if (extracted % 250 == 0) progressCallback(extracted, extracted + 1)
                 }
             }
         }
-    }
-
-    private fun estimateTarEntries(gzis: GZIPInputStream): Int {
-        // Quick pass to count entries (returns 0 if not feasible)
-        return 0 // Skip estimation for now
     }
 
     private fun isRootfsValid(rootfsDir: File): Boolean {

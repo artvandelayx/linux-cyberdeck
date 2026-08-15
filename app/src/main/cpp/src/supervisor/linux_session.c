@@ -11,7 +11,11 @@
 #include <time.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <sys/statfs.h>
 #include <android/log.h>
+
+int storage_bridge_mount(const char*, const char*, JavaVM*, jobject);
+int storage_bridge_unmount(const char*);
 
 #define LOG_TAG "LinuxCyberdeck"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -26,7 +30,7 @@ static struct {
     pid_t lightdm_pid;
     bool running;
     pthread_mutex_t mutex;
-} g_processes = {0};
+} g_processes = {.mutex = PTHREAD_MUTEX_INITIALIZER};
 
 // Global state
 static struct {
@@ -49,7 +53,7 @@ static struct {
 
     pthread_mutex_t mutex;
     bool initialized;
-} g_state = {0};
+} g_state = {.mutex = PTHREAD_MUTEX_INITIALIZER};
 
 // Forward declarations
 static void* monitor_thread(void* arg);
@@ -65,17 +69,18 @@ static int extract_proot_binary();
 static int extract_start_script();
 static pid_t launch_process(const char* cmd, char* const argv[], const char* log_file);
 
-int lc_initialize_session(const char* app_files_dir, const char* package_name) {
+int lc_initialize_session(const char* app_files_dir, const char* package_name, const char* proot_path) {
     pthread_mutex_lock(&g_state.mutex);
 
     if (g_state.initialized) {
+        char bash_path[768];
+        snprintf(bash_path, sizeof(bash_path), "%s/bin/bash", g_state.linux_rootfs_dir);
+        if (g_state.state == LC_STATE_NOT_INSTALLED && access(bash_path, X_OK) == 0) {
+            g_state.state = LC_STATE_INSTALLED;
+        }
         pthread_mutex_unlock(&g_state.mutex);
         return LC_RESULT_SUCCESS;
     }
-
-    // Initialize mutexes
-    pthread_mutex_init(&g_state.mutex, NULL);
-    pthread_mutex_init(&g_processes.mutex, NULL);
 
     // Store paths
     strncpy(g_state.app_files_dir, app_files_dir, sizeof(g_state.app_files_dir) - 1);
@@ -84,17 +89,26 @@ int lc_initialize_session(const char* app_files_dir, const char* package_name) {
     snprintf(g_state.linux_home_dir, sizeof(g_state.linux_home_dir), "%s/linux/home", app_files_dir);
     snprintf(g_state.linux_logs_dir, sizeof(g_state.linux_logs_dir), "%s/linux/logs", app_files_dir);
     snprintf(g_state.linux_tmp_dir, sizeof(g_state.linux_tmp_dir), "%s/linux/tmp", app_files_dir);
-    snprintf(g_state.proot_bin_path, sizeof(g_state.proot_bin_path), "%s/proot", app_files_dir);
+    if (!proot_path || access(proot_path, X_OK) != 0) {
+        pthread_mutex_unlock(&g_state.mutex);
+        return LC_RESULT_NOT_INSTALLED;
+    }
+    strncpy(g_state.proot_bin_path, proot_path, sizeof(g_state.proot_bin_path) - 1);
     snprintf(g_state.start_script_path, sizeof(g_state.start_script_path), "%s/start_linux.sh", app_files_dir);
 
     // Create directories
+    char linux_base_dir[768];
+    snprintf(linux_base_dir, sizeof(linux_base_dir), "%s/linux", app_files_dir);
+    mkdir(linux_base_dir, 0755);
     mkdir(g_state.linux_rootfs_dir, 0755);
     mkdir(g_state.linux_home_dir, 0755);
     mkdir(g_state.linux_logs_dir, 0755);
     mkdir(g_state.linux_tmp_dir, 0755);
 
     // Initialize state
-    g_state.state = LC_STATE_NOT_INSTALLED;
+    char bash_path[768];
+    snprintf(bash_path, sizeof(bash_path), "%s/bin/bash", g_state.linux_rootfs_dir);
+    g_state.state = access(bash_path, X_OK) == 0 ? LC_STATE_INSTALLED : LC_STATE_NOT_INSTALLED;
     g_state.progress = 0.0f;
     g_state.auto_start = false;
     g_state.touch_mode = true;
@@ -121,17 +135,18 @@ int lc_start_linux_session(void) {
 
     // Check if rootfs exists
     struct stat st;
-    if (stat(g_state.linux_rootfs_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    char bash_path[768];
+    snprintf(bash_path, sizeof(bash_path), "%s/bin/bash", g_state.linux_rootfs_dir);
+    if (stat(g_state.linux_rootfs_dir, &st) != 0 || !S_ISDIR(st.st_mode) || access(bash_path, X_OK) != 0) {
         pthread_mutex_unlock(&g_state.mutex);
         return LC_RESULT_NOT_INSTALLED;
     }
 
-    // Extract PRoot binary and start script if not present
+    // Executables are packaged in nativeLibraryDir because modern Android
+    // blocks executing files copied into writable app storage.
     if (access(g_state.proot_bin_path, X_OK) != 0) {
-        if (extract_proot_binary() != 0) {
-            pthread_mutex_unlock(&g_state.mutex);
-            return LC_RESULT_ERROR;
-        }
+        pthread_mutex_unlock(&g_state.mutex);
+        return LC_RESULT_NOT_INSTALLED;
     }
 
     if (access(g_state.start_script_path, X_OK) != 0) {
@@ -420,13 +435,10 @@ bool lc_get_touch_mode(void) {
 
 void lc_cleanup(void) {
     pthread_mutex_lock(&g_state.mutex);
-    if (g_state.initialized) {
-        stop_all_processes();
-        pthread_mutex_destroy(&g_state.mutex);
-        pthread_mutex_destroy(&g_processes.mutex);
-        g_state.initialized = false;
-    }
+    bool initialized = g_state.initialized;
+    g_state.initialized = false;
     pthread_mutex_unlock(&g_state.mutex);
+    if (initialized) stop_all_processes();
 }
 
 // Private helper functions
@@ -555,6 +567,9 @@ static pid_t launch_process(const char* cmd, char* const argv[], const char* log
 
 static int start_x11_server() {
     LOGI("Starting X11 server (Xvfb + Xwayland)...");
+    /* Xvfb runs inside Debian/PRoot. Android cannot execute Debian X11 tools
+       directly; start_linux.sh owns Xvfb and its loopback noVNC bridge. */
+    return 0;
     
     // Create Xauthority file
     char xauth_file[256];
@@ -668,6 +683,12 @@ static int start_debian_userspace() {
     }
     
     // Launch PRoot
+    char home_bind[1100];
+    char tmp_bind[1100];
+    char script_bind[1100];
+    snprintf(home_bind, sizeof(home_bind), "--bind=%s:/home/cyber", g_state.linux_home_dir);
+    snprintf(tmp_bind, sizeof(tmp_bind), "--bind=%s:/tmp", g_state.linux_tmp_dir);
+    snprintf(script_bind, sizeof(script_bind), "--bind=%s:/start_linux.sh", g_state.start_script_path);
     char* proot_argv[] = {
         g_state.proot_bin_path,
         "--rootfs", g_state.linux_rootfs_dir,
@@ -679,8 +700,9 @@ static int start_debian_userspace() {
         "--bind=/dev:/dev",
         "--bind=/dev/pts:/dev/pts",
         "--bind=/tmp:/tmp",
-        "--bind", g_state.linux_home_dir, ":/home/cyber",
-        "--bind", g_state.linux_tmp_dir, ":/tmp",
+        home_bind,
+        tmp_bind,
+        script_bind,
         "--cwd=/home/cyber",
         "--env=HOME=/home/cyber",
         "--env=USER=cyber",
@@ -693,7 +715,7 @@ static int start_debian_userspace() {
         "--env=LC_ALL=en_US.UTF-8",
         "--env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "/bin/bash",
-        g_state.start_script_path,
+        "/start_linux.sh",
         NULL
     };
     
@@ -821,8 +843,8 @@ static void* monitor_thread(void* arg) {
 
         // Check process health
         pthread_mutex_lock(&g_processes.mutex);
-        bool xvfb_alive = g_processes.xvfb_pid > 0 && kill(g_processes.xvfb_pid, 0) == 0;
-        bool xwayland_alive = g_processes.xwayland_pid > 0 && kill(g_processes.xwayland_pid, 0) == 0;
+        bool xvfb_alive = true;
+        bool xwayland_alive = true;
         bool proot_alive = g_processes.proot_pid > 0 && kill(g_processes.proot_pid, 0) == 0;
         pthread_mutex_unlock(&g_processes.mutex);
 

@@ -28,44 +28,16 @@ find_library(log-lib log)
 find_library(android-lib android)
 find_library(dl-lib dl)
 
-# Find FUSE library for storage bridge
-find_library(fuse-lib fuse)
-
-# Build PRoot from source
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/proot)
-
-# Build our native supervisor
-add_executable(linux_supervisor
-    src/supervisor/main.c
-    src/supervisor/process_monitor.c
-    src/supervisor/linux_session.c
-    src/supervisor/storage_bridge.c
-    src/supervisor/x11_manager.c
-)
-
-target_link_libraries(linux_supervisor
-    PRIVATE
-    proot
-    ${log-lib}
-    ${android-lib}
-    ${dl-lib}
-    ${fuse-lib}
-    pthread
-    rt
-)
-
 # Build JNI bridge
 add_library(linuxcyberdeck_jni SHARED
     src/jni/jni_bridge.c
-    src/jni/jni_session.c
-    src/jni/jni_storage.c
+    src/supervisor/linux_session.c
+    src/supervisor/storage_registry.c
 )
 
 target_link_libraries(linuxcyberdeck_jni
     PRIVATE
-    linux_supervisor
     ${log-lib}
     ${android-lib}
     ${dl-lib}
-    pthread
 )

@@ -7,6 +7,7 @@ plugins {
 android {
     namespace = "com.linuxcyberdeck"
     compileSdk = 34
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.linuxcyberdeck"
@@ -46,12 +47,13 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 
     externalNativeBuild {
         cmake {
-            path("CMakeLists.txt")
-            version("3.22.1")
+            path("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 
@@ -61,7 +63,12 @@ android {
         }
         jniLibs {
             useLegacyPackaging = true
+            keepDebugSymbols += "**/libproot.so"
         }
+    }
+
+    androidResources {
+        noCompress += "gz"
     }
 }
 
@@ -74,6 +81,7 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.8.2")
     implementation("androidx.fragment:fragment-ktx:1.6.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("org.apache.commons:commons-compress:1.26.1")
 
     // Foreground service
     implementation("androidx.work:work-runtime-ktx:2.9.0")

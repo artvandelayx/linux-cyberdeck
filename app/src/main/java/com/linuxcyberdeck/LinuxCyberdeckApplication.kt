@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.util.Log
 import timber.log.Timber
+import com.linuxcyberdeck.native.LinuxNativeBridge
 
 class LinuxCyberdeckApplication : Application() {
 
@@ -27,6 +28,11 @@ class LinuxCyberdeckApplication : Application() {
         
         Timber.tag(TAG)
         Timber.i("Linux Cyberdeck Application started")
+        val prootPath = "${applicationInfo.nativeLibraryDir}/libproot.so"
+        val result = LinuxNativeBridge.initializeSession(filesDir.absolutePath, packageName, prootPath)
+        if (result != LinuxNativeBridge.RESULT_SUCCESS) {
+            Timber.e("Native session initialization failed: %d", result)
+        }
     }
 
     private class ReleaseTree : Timber.Tree() {

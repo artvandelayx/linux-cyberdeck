@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <jni.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -75,7 +76,7 @@ typedef struct {
 // app_files_dir: path to app's files directory (e.g., /data/data/com.linuxcyberdeck/files)
 // package_name: app package name
 // Returns 0 on success, negative error code on failure
-int lc_initialize_session(const char* app_files_dir, const char* package_name);
+int lc_initialize_session(const char* app_files_dir, const char* package_name, const char* proot_path);
 
 // Start the Linux session (X11 -> Debian -> XFCE)
 // Returns result code

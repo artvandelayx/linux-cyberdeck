@@ -60,13 +60,6 @@ class StorageBridgeManager(private val context: Context) : ViewModel() {
         const val REQUEST_CODE_STORAGE = 1001
     }
 
-    // Storage Access Framework launcher
-    private val storageLauncher = object : ActivityResultContracts.OpenDocumentTree() {
-        override fun parseResult(resultCode: Int, data: Intent?): Uri? {
-            return data?.data
-        }
-    }
-
     fun requestSharedStorageAccess(activity: Activity, launcher: ActivityResultLauncher<Intent>) {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
         // Suggest starting at root of shared storage
@@ -119,7 +112,7 @@ class StorageBridgeManager(private val context: Context) : ViewModel() {
                 val androidPath = treeUri.toString()
 
                 // Create mount point directory in Linux (via native bridge)
-                val result = LinuxNativeBridge.mountSharedStorage(androidPath, linuxMountPoint, this)
+                val result = LinuxNativeBridge.mountSharedStorage(androidPath, linuxMountPoint, this@StorageBridgeManager)
 
                 if (result == LinuxNativeBridge.RESULT_SUCCESS) {
                     _mountStatus.postValue(MountStatus(
@@ -146,7 +139,7 @@ class StorageBridgeManager(private val context: Context) : ViewModel() {
 
     fun unmountSharedStorage(mountPoint: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val result = LinuxNativeBridge.unmountSharedStorage(mountPoint, this)
+            val result = LinuxNativeBridge.unmountSharedStorage(mountPoint, this@StorageBridgeManager)
             if (result == LinuxNativeBridge.RESULT_SUCCESS) {
                 _mountStatus.postValue(MountStatus())
                 refreshMounts()

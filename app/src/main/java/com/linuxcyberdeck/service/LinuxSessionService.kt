@@ -12,6 +12,11 @@ import android.os.IBinder
 import android.os.PowerManager
 import androidx.annotation.Nullable
 import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import com.linuxcyberdeck.MainActivity
 import com.linuxcyberdeck.R
 import com.linuxcyberdeck.native.LinuxNativeBridge
@@ -27,10 +32,12 @@ class LinuxSessionService : Service() {
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        startForeground(NOTIFICATION_ID, buildNotification(R.string.status_starting))
         acquireWakeLock()
         Timber.i("LinuxSessionService created")
     }
@@ -55,7 +62,7 @@ class LinuxSessionService : Service() {
     }
 
     private fun startLinuxSession() {
-        lifecycleScope.launch {
+        serviceScope.launch {
             val result = LinuxNativeBridge.startLinuxSession()
             when (result) {
                 LinuxNativeBridge.RESULT_SUCCESS -> {
@@ -75,7 +82,7 @@ class LinuxSessionService : Service() {
     }
 
     private fun stopLinuxSession() {
-        lifecycleScope.launch {
+        serviceScope.launch {
             val result = LinuxNativeBridge.stopLinuxSession()
             when (result) {
                 LinuxNativeBridge.RESULT_SUCCESS -> {
@@ -92,7 +99,7 @@ class LinuxSessionService : Service() {
     }
 
     private fun restartLinuxSession() {
-        lifecycleScope.launch {
+        serviceScope.launch {
             val result = LinuxNativeBridge.restartLinuxSession()
             when (result) {
                 LinuxNativeBridge.RESULT_SUCCESS -> {
@@ -203,6 +210,7 @@ class LinuxSessionService : Service() {
     }
 
     override fun onDestroy() {
+        serviceScope.cancel()
         releaseWakeLock()
         stopForeground(true)
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
