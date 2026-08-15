@@ -186,6 +186,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - uses: android-actions/setup-android@v3
 
@@ -198,12 +199,23 @@ jobs:
           chmod +x gradlew
           # The compressed desktop rootfs is about 500 MB. Resource packaging
           # needs more heap than the conservative settings used on local PCs.
-          set +e
-          ./gradlew :app:assembleDebug --no-daemon --max-workers=2 --stacktrace \
-            -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
-            2>&1 | tee gradle-build.log
-          gradle_status=${PIPESTATUS[0]}
-          set -e
+          gradle_status=1
+          for retry_delay in 0 30 90 180; do
+            sleep "$retry_delay"
+            set +e
+            ./gradlew :app:assembleDebug --no-daemon --max-workers=2 --stacktrace \
+              -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+              2>&1 | tee gradle-build.log
+            gradle_status=${PIPESTATUS[0]}
+            set -e
+            if [ "$gradle_status" -eq 0 ]; then
+              break
+            fi
+            if ! grep -Eq '429|Too Many Requests|timed out|Connection reset|Could not GET' gradle-build.log; then
+              break
+            fi
+            echo "Transient dependency download failure; retrying Gradle after a delay."
+          done
           if [ "$gradle_status" -ne 0 ]; then
             error_line="$(awk '
               /^\* What went wrong:/ { capture=1; next }
