@@ -158,10 +158,10 @@ EOF
     log_info "Creating rootfs tarball..."
     mkdir -p "$ASSETS_DIR"
     cd "$BUILD_DIR"
-    tar -czf "$ASSETS_DIR/rootfs-arm64.tar.gz" rootfs-arm64
+    tar -czf "$ASSETS_DIR/rootfs-arm64.tgz" rootfs-arm64
     
-    log_info "Rootfs tarball created: $ASSETS_DIR/rootfs-arm64.tar.gz"
-    ls -lh "$ASSETS_DIR/rootfs-arm64.tar.gz"
+    log_info "Rootfs tarball created: $ASSETS_DIR/rootfs-arm64.tgz"
+    ls -lh "$ASSETS_DIR/rootfs-arm64.tgz"
 }
 
 # Build PRoot for Android ARM64

@@ -70,7 +70,7 @@ chmod +x build_local.sh
 ### Output
 
 - **APK**: `app/build/outputs/apk/release/app-release.apk`
-- **Rootfs tarball**: `app/src/main/assets/rootfs-arm64.tar.gz` (~3-4 GB)
+- **Rootfs tarball**: `app/src/main/assets/rootfs-arm64.tgz` (~3-4 GB)
 - **PRoot binary**: `app/src/main/assets/proot`
 - **Native libs**: `app/src/main/jniLibs/arm64-v8a/liblinuxcyberdeck_jni.so`
 

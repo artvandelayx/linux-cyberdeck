@@ -177,10 +177,11 @@ jobs:
           set -euxo pipefail
           test -s app/src/main/assets/rootfs-arm64.tar.gz
           gzip -t app/src/main/assets/rootfs-arm64.tar.gz
+          mv app/src/main/assets/rootfs-arm64.tar.gz app/src/main/assets/rootfs-arm64.tgz
           chmod 0755 app/src/main/jniLibs/arm64-v8a/libproot.so
           test -x app/src/main/jniLibs/arm64-v8a/libproot.so
           file app/src/main/jniLibs/arm64-v8a/libproot.so | grep -q 'ARM aarch64'
-          ls -lh app/src/main/assets/rootfs-arm64.tar.gz app/src/main/jniLibs/arm64-v8a/libproot.so
+          ls -lh app/src/main/assets/rootfs-arm64.tgz app/src/main/jniLibs/arm64-v8a/libproot.so
 
       - uses: actions/setup-java@v5
         with:
@@ -240,7 +241,7 @@ jobs:
           fi
           unzip -Z1 linux-cyberdeck.apk > apk-contents.txt
           for required_entry in \
-            'assets/rootfs-arm64.tar.gz' \
+            'assets/rootfs-arm64.tgz' \
             'lib/arm64-v8a/libproot.so' \
             'lib/arm64-v8a/liblinuxcyberdeck_jni.so'; do
             if ! grep -Fxq "$required_entry" apk-contents.txt; then

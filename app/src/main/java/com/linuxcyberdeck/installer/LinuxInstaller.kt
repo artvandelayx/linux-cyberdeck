@@ -38,7 +38,7 @@ class LinuxInstaller(private val context: Context) : ViewModel() {
     )
 
     // Asset file names
-    private val ROOTFS_TARBALL = "rootfs-arm64.tar.gz"
+    private val ROOTFS_TARBALL = "rootfs-arm64.tgz"
     private val START_SCRIPT = "start_linux.sh"
     private var installJob: Job? = null
 

@@ -172,10 +172,10 @@ create_rootfs_tarball() {
     mkdir -p "$ASSETS_DIR"
 
     # Create compressed tarball
-    tar -czf "$ASSETS_DIR/rootfs-arm64.tar.gz" -C "$BUILD_DIR" rootfs-arm64
+    tar -czf "$ASSETS_DIR/rootfs-arm64.tgz" -C "$BUILD_DIR" rootfs-arm64
 
-    log_info "Rootfs tarball created: $ASSETS_DIR/rootfs-arm64.tar.gz"
-    ls -lh "$ASSETS_DIR/rootfs-arm64.tar.gz"
+    log_info "Rootfs tarball created: $ASSETS_DIR/rootfs-arm64.tgz"
+    ls -lh "$ASSETS_DIR/rootfs-arm64.tgz"
 }
 
 # Build native libraries

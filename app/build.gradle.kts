@@ -68,7 +68,7 @@ android {
     }
 
     androidResources {
-        noCompress += "gz"
+        noCompress += "tgz"
     }
 }
 
