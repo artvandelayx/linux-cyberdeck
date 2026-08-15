@@ -205,7 +205,11 @@ jobs:
           gradle_status=${PIPESTATUS[0]}
           set -e
           if [ "$gradle_status" -ne 0 ]; then
-            error_line="$(grep -E '(^FAILURE:|^\* What went wrong:|^Execution failed|^> |error:|Exception|OutOfMemoryError)' gradle-build.log | tail -n 1 || true)"
+            error_line="$(awk '
+              /^\* What went wrong:/ { capture=1; next }
+              /^\* Try:/ { capture=0 }
+              capture { print }
+            ' gradle-build.log | head -c 3500 | tr '\n' ' ' || true)"
             error_line="${error_line:-Gradle failed; inspect the Build signed debug APK step.}"
             error_line="${error_line//'%'/'%25'}"
             error_line="${error_line//$'\r'/'%0D'}"
