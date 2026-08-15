@@ -12,7 +12,11 @@ android {
     defaultConfig {
         applicationId = "com.linuxcyberdeck"
         minSdk = 26
-        targetSdk = 34
+        // Android 10+ blocks apps targeting API 29 or newer from executing
+        // binaries extracted into app-private storage. PRoot must execute the
+        // Debian loader and programs from that filesystem, so this sideloaded
+        // runtime intentionally opts into the API 28 execution policy.
+        targetSdk = 28
         versionCode = 1
         versionName = "1.0.0"
 
