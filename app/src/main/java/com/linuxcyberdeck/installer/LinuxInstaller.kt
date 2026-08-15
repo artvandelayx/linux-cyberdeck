@@ -234,7 +234,16 @@ class LinuxInstaller(private val context: Context) : ViewModel() {
                                 throw IOException("Unsafe hard link in rootfs archive: ${entry.name}")
                             }
                             target.parentFile?.mkdirs()
-                            Os.link(source.path, target.path)
+                            if (target.exists()) target.delete()
+                            try {
+                                Os.link(source.path, target.path)
+                            } catch (e: android.system.ErrnoException) {
+                                // Android SELinux commonly denies hard links for app data.
+                                // A regular copy has equivalent contents inside the PRoot
+                                // filesystem and avoids requiring elevated privileges.
+                                Timber.w(e, "Hard link denied; copying %s instead", entry.name)
+                                source.copyTo(target, overwrite = true)
+                            }
                         }
                         entry.isFile -> {
                             target.parentFile?.mkdirs()
