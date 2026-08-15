@@ -652,6 +652,13 @@ static int start_x11_server() {
 
 static int start_debian_userspace() {
     LOGI("Starting Debian userspace via PRoot...");
+
+    // Android's default temporary directory is not writable by PRoot.
+    // Point its internal probes and temporary files at app-private storage.
+    if (setenv("PROOT_TMP_DIR", g_state.linux_tmp_dir, 1) != 0) {
+        LOGE("Failed to configure PRoot temporary directory: %s", strerror(errno));
+        return -1;
+    }
     
     // Build PRoot command
     char proot_cmd[2048];
@@ -659,10 +666,10 @@ static int start_debian_userspace() {
         "%s --rootfs=%s --root-id --kill-on-exit --link2symlink "
         "--bind=/proc:/proc --bind=/sys:/sys --bind=/dev:/dev --bind=/dev/pts:/dev/pts "
         "--bind=/tmp:/tmp --bind=%s:/home/cyber --bind=%s:/tmp "
-        "--cwd=/home/cyber --env=HOME=/home/cyber --env=USER=cyber --env=LOGNAME=cyber "
-        "--env=SHELL=/bin/bash --env=TERM=xterm-256color --env=DISPLAY=:1 "
-        "--env=XAUTHORITY=/tmp/.X1-auth --env=LANG=en_US.UTF-8 --env=LC_ALL=en_US.UTF-8 "
-        "--env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
+        "--cwd=/home/cyber /usr/bin/env HOME=/home/cyber USER=cyber LOGNAME=cyber "
+        "SHELL=/bin/bash TERM=xterm-256color DISPLAY=:1 XAUTHORITY=/tmp/.X1-auth "
+        "LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 "
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
         "/bin/bash /start_linux.sh",
         g_state.proot_bin_path,
         g_state.linux_rootfs_dir,
@@ -707,16 +714,17 @@ static int start_debian_userspace() {
         tmp_bind,
         script_bind,
         "--cwd=/home/cyber",
-        "--env=HOME=/home/cyber",
-        "--env=USER=cyber",
-        "--env=LOGNAME=cyber",
-        "--env=SHELL=/bin/bash",
-        "--env=TERM=xterm-256color",
-        "--env=DISPLAY=:1",
-        "--env=XAUTHORITY=/tmp/.X1-auth",
-        "--env=LANG=en_US.UTF-8",
-        "--env=LC_ALL=en_US.UTF-8",
-        "--env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "/usr/bin/env",
+        "HOME=/home/cyber",
+        "USER=cyber",
+        "LOGNAME=cyber",
+        "SHELL=/bin/bash",
+        "TERM=xterm-256color",
+        "DISPLAY=:1",
+        "XAUTHORITY=/tmp/.X1-auth",
+        "LANG=en_US.UTF-8",
+        "LC_ALL=en_US.UTF-8",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "/bin/bash",
         "/start_linux.sh",
         NULL
