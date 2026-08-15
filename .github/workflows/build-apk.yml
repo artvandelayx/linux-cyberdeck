@@ -19,7 +19,7 @@ env:
 jobs:
   rootfs:
     name: Debian 13 ARM64 rootfs
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends debootstrap qemu-user-static ca-certificates
+          sudo apt-get install -y --no-install-recommends debootstrap ca-certificates
 
       - name: Build and configure Debian
         run: |
@@ -42,11 +42,9 @@ jobs:
             test -e /usr/share/debootstrap/scripts/sid
             sudo ln -s sid /usr/share/debootstrap/scripts/trixie
           fi
-          test -x /usr/bin/qemu-aarch64-static
-          sudo debootstrap --arch=arm64 --foreign --variant=minbase trixie "$ROOTFS" "$MIRROR"
-          sudo cp /usr/bin/qemu-aarch64-static "$ROOTFS/usr/bin/"
+          test "$(dpkg --print-architecture)" = arm64
+          sudo debootstrap --arch=arm64 --variant=minbase trixie "$ROOTFS" "$MIRROR"
           sudo cp /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
-          sudo chroot "$ROOTFS" /usr/bin/qemu-aarch64-static /debootstrap/debootstrap --second-stage
           printf '#!/bin/sh\nexit 101\n' | sudo tee "$ROOTFS/usr/sbin/policy-rc.d" >/dev/null
           sudo chmod 0755 "$ROOTFS/usr/sbin/policy-rc.d"
 
@@ -56,7 +54,7 @@ jobs:
           deb https://security.debian.org/debian-security trixie-security main
           EOF
 
-          sudo chroot "$ROOTFS" /usr/bin/qemu-aarch64-static /bin/bash -euxo pipefail <<'EOF'
+          sudo chroot "$ROOTFS" /bin/bash -euxo pipefail <<'EOF'
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y --no-install-recommends \
@@ -93,8 +91,7 @@ jobs:
           sudo cp app/src/main/assets/xfce-config/xfwm4/xfwm4.xml "$ROOTFS/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml/"
           sudo cp app/src/main/assets/xfce-config/xsettings/xsettings.xml "$ROOTFS/home/cyber/.config/xfce4/xfconf/xfce-perchannel-xml/"
           sudo cp app/src/main/assets/xfce-config/xfce4-terminal/terminalrc "$ROOTFS/home/cyber/.config/xfce4/terminal/"
-          sudo chroot "$ROOTFS" /usr/bin/qemu-aarch64-static chown -R cyber:cyber /home/cyber
-          sudo rm -f "$ROOTFS/usr/bin/qemu-aarch64-static"
+          sudo chroot "$ROOTFS" chown -R cyber:cyber /home/cyber
 
           test -x "$ROOTFS/bin/bash"
           test -x "$ROOTFS/usr/bin/startxfce4"
