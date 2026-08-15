@@ -35,6 +35,14 @@ jobs:
           set -euxo pipefail
           ROOTFS="${RUNNER_TEMP}/rootfs-arm64"
           MIRROR="https://deb.debian.org/debian"
+          # Ubuntu 24.04's debootstrap predates Debian 13 and may not ship a
+          # trixie suite alias yet.  Stable Debian suites use the generic sid
+          # bootstrap script, so provide the same alias explicitly.
+          if [ ! -e /usr/share/debootstrap/scripts/trixie ]; then
+            test -e /usr/share/debootstrap/scripts/sid
+            sudo ln -s sid /usr/share/debootstrap/scripts/trixie
+          fi
+          test -x /usr/bin/qemu-aarch64-static
           sudo debootstrap --arch=arm64 --foreign --variant=minbase trixie "$ROOTFS" "$MIRROR"
           sudo cp /usr/bin/qemu-aarch64-static "$ROOTFS/usr/bin/"
           sudo cp /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
