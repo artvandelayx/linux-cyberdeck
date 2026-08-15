@@ -223,9 +223,10 @@ jobs:
         run: |
           set -euxo pipefail
           "${ANDROID_HOME}/build-tools/34.0.0/apksigner" verify --verbose linux-cyberdeck.apk
-          unzip -l linux-cyberdeck.apk | grep -q 'assets/rootfs-arm64.tar.gz'
-          unzip -l linux-cyberdeck.apk | grep -q 'lib/arm64-v8a/libproot.so'
-          unzip -l linux-cyberdeck.apk | grep -q 'lib/arm64-v8a/liblinuxcyberdeck_jni.so'
+          unzip -Z1 linux-cyberdeck.apk > apk-contents.txt
+          grep -Fxq 'assets/rootfs-arm64.tar.gz' apk-contents.txt
+          grep -Fxq 'lib/arm64-v8a/libproot.so' apk-contents.txt
+          grep -Fxq 'lib/arm64-v8a/liblinuxcyberdeck_jni.so' apk-contents.txt
           sha256sum linux-cyberdeck.apk | tee linux-cyberdeck.apk.sha256
           ls -lh linux-cyberdeck.apk
 
