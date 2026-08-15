@@ -59,7 +59,9 @@ class LinuxSessionManager(private val application: Application) : AndroidViewMod
     }
 
     fun refreshStatus() {
-        _isLoading.value = true
+        // refreshStatus is also called after native operations on Dispatchers.IO.
+        // postValue is safe from both main and worker threads.
+        _isLoading.postValue(true)
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val nativeStatus = LinuxNativeBridge.getSessionStatus()

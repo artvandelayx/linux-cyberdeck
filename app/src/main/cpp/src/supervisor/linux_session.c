@@ -68,6 +68,7 @@ static void write_log(lc_log_type_t type, const char* message);
 static int extract_proot_binary();
 static int extract_start_script();
 static pid_t launch_process(const char* cmd, char* const argv[], const char* log_file);
+static bool is_proot_alive();
 
 int lc_initialize_session(const char* app_files_dir, const char* package_name, const char* proot_path) {
     pthread_mutex_lock(&g_state.mutex);
@@ -686,12 +687,14 @@ static int start_debian_userspace() {
     char home_bind[1100];
     char tmp_bind[1100];
     char script_bind[1100];
+    char rootfs_arg[1100];
+    snprintf(rootfs_arg, sizeof(rootfs_arg), "--rootfs=%s", g_state.linux_rootfs_dir);
     snprintf(home_bind, sizeof(home_bind), "--bind=%s:/home/cyber", g_state.linux_home_dir);
     snprintf(tmp_bind, sizeof(tmp_bind), "--bind=%s:/tmp", g_state.linux_tmp_dir);
     snprintf(script_bind, sizeof(script_bind), "--bind=%s:/start_linux.sh", g_state.start_script_path);
     char* proot_argv[] = {
         g_state.proot_bin_path,
-        "--rootfs", g_state.linux_rootfs_dir,
+        rootfs_arg,
         "--root-id",
         "--kill-on-exit",
         "--link2symlink",
@@ -742,10 +745,34 @@ static int start_xfce_desktop() {
     
     // Give it time to start
     sleep(5);
-    
-    // The lightdm PID would be inside the PRoot namespace
-    // For monitoring, we track the PRoot PID
+
+    if (!is_proot_alive()) {
+        LOGE("PRoot exited during desktop startup");
+        return -1;
+    }
+
     return 0;
+}
+
+static bool is_proot_alive() {
+    pthread_mutex_lock(&g_processes.mutex);
+    pid_t pid = g_processes.proot_pid;
+    if (pid <= 0) {
+        pthread_mutex_unlock(&g_processes.mutex);
+        return false;
+    }
+
+    int status = 0;
+    pid_t result = waitpid(pid, &status, WNOHANG);
+    if (result == pid || (result < 0 && errno == ECHILD)) {
+        g_processes.proot_pid = 0;
+        pthread_mutex_unlock(&g_processes.mutex);
+        return false;
+    }
+
+    bool alive = result == 0 && kill(pid, 0) == 0;
+    pthread_mutex_unlock(&g_processes.mutex);
+    return alive;
 }
 
 static void stop_all_processes() {
@@ -842,11 +869,9 @@ static void* monitor_thread(void* arg) {
         }
 
         // Check process health
-        pthread_mutex_lock(&g_processes.mutex);
         bool xvfb_alive = true;
         bool xwayland_alive = true;
-        bool proot_alive = g_processes.proot_pid > 0 && kill(g_processes.proot_pid, 0) == 0;
-        pthread_mutex_unlock(&g_processes.mutex);
+        bool proot_alive = is_proot_alive();
 
         if (!xvfb_alive || !xwayland_alive) {
             LOGW("X11 server died, restarting...");
