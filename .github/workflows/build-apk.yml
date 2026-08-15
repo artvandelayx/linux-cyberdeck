@@ -189,6 +189,14 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      # Keep the debug signing identity stable so ADB can install later fixes
+      # with -r without deleting the user's extracted Linux filesystem.
+      - name: Restore debug signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: linux-cyberdeck-debug-keystore-v1
+
       - uses: android-actions/setup-android@v3
 
       - name: Install Android packages
