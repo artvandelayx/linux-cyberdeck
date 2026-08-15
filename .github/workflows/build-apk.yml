@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install rootfs build tools
         run: |
@@ -150,14 +150,14 @@ jobs:
     timeout-minutes: 120
     needs: [rootfs, proot]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: rootfs-arm64
           path: app/src/main/assets
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: proot-arm64
           path: app/src/main/jniLibs/arm64-v8a
@@ -172,7 +172,7 @@ jobs:
           file app/src/main/jniLibs/arm64-v8a/libproot.so | grep -q 'ARM aarch64'
           ls -lh app/src/main/assets/rootfs-arm64.tar.gz app/src/main/jniLibs/arm64-v8a/libproot.so
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -186,7 +186,10 @@ jobs:
         run: |
           set -euxo pipefail
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon --max-workers=2
+          # The compressed desktop rootfs is about 500 MB. Resource packaging
+          # needs more heap than the conservative settings used on local PCs.
+          ./gradlew :app:assembleDebug --no-daemon --max-workers=2 --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
           cp app/build/outputs/apk/debug/app-debug.apk linux-cyberdeck.apk
 
       - name: Verify APK contents and signature
