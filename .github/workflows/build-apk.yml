@@ -24,13 +24,22 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Restore cached rootfs
+        id: rootfs-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/artifacts/rootfs-arm64.tar.gz
+          key: rootfs-trixie-arm64-v2-${{ hashFiles('app/src/main/assets/xfce-config/**') }}
+
       - name: Install rootfs build tools
+        if: steps.rootfs-cache.outputs.cache-hit != 'true'
         run: |
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap ca-certificates
 
       - name: Build and configure Debian
+        if: steps.rootfs-cache.outputs.cache-hit != 'true'
         run: |
           set -euxo pipefail
           ROOTFS="${RUNNER_TEMP}/rootfs-arm64"
@@ -99,6 +108,7 @@ jobs:
           test -x "$ROOTFS/usr/bin/python3"
 
       - name: Package rootfs
+        if: steps.rootfs-cache.outputs.cache-hit != 'true'
         run: |
           set -euxo pipefail
           mkdir -p "${RUNNER_TEMP}/artifacts"
@@ -188,8 +198,21 @@ jobs:
           chmod +x gradlew
           # The compressed desktop rootfs is about 500 MB. Resource packaging
           # needs more heap than the conservative settings used on local PCs.
+          set +e
           ./gradlew :app:assembleDebug --no-daemon --max-workers=2 --stacktrace \
-            -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+            -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            2>&1 | tee gradle-build.log
+          gradle_status=${PIPESTATUS[0]}
+          set -e
+          if [ "$gradle_status" -ne 0 ]; then
+            error_line="$(grep -E '(^FAILURE:|^\* What went wrong:|^Execution failed|^> |error:|Exception|OutOfMemoryError)' gradle-build.log | tail -n 1 || true)"
+            error_line="${error_line:-Gradle failed; inspect the Build signed debug APK step.}"
+            error_line="${error_line//'%'/'%25'}"
+            error_line="${error_line//$'\r'/'%0D'}"
+            error_line="${error_line//$'\n'/'%0A'}"
+            echo "::error title=Gradle APK build failed::$error_line"
+            exit "$gradle_status"
+          fi
           cp app/build/outputs/apk/debug/app-debug.apk linux-cyberdeck.apk
 
       - name: Verify APK contents and signature
