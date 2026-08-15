@@ -58,7 +58,7 @@ fi
 log "Xvfb ready"
 
 log "Starting loopback display bridge..."
-x11vnc -display ":$DISPLAY_NUM" -localhost -forever -shared -nopw -rfbport 5901 \
+x11vnc -display ":$DISPLAY_NUM" -localhost -forever -shared -nopw -noshm -rfbport 5901 \
     >>"$LOG_DIR/x11vnc.log" 2>&1 &
 websockify --web /usr/share/novnc 127.0.0.1:6080 127.0.0.1:5901 \
     >>"$LOG_DIR/novnc.log" 2>&1 &

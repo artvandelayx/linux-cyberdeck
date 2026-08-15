@@ -11,6 +11,7 @@ import com.linuxcyberdeck.installer.LinuxInstaller
 import com.linuxcyberdeck.native.LinuxNativeBridge
 import com.linuxcyberdeck.native.LinuxNativeBridge.SessionStatusNative
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -88,7 +89,15 @@ class LinuxSessionManager(private val application: Application) : AndroidViewMod
                     LinuxNativeBridge.RESULT_SUCCESS -> {
                         Timber.i("Linux session started successfully")
                         ContextCompat.startForegroundService(application, Intent(application, LinuxSessionService::class.java))
-                        refreshStatus()
+                        // Native startup continues asynchronously after this call returns.
+                        // Poll until it reaches a terminal state so the UI can expose the
+                        // desktop button without requiring an activity restart.
+                        repeat(30) {
+                            delay(1_000)
+                            val status = convertFromNative(LinuxNativeBridge.getSessionStatus())
+                            _sessionStatus.postValue(status)
+                            if (status.state != LinuxSessionState.STARTING) return@launch
+                        }
                     }
                     LinuxNativeBridge.RESULT_ALREADY_RUNNING -> {
                         Timber.w("Linux session already running")
